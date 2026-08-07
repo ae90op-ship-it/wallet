@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { db, Wallet, Transaction } from '../db/db';
+import { db, Wallet, Transaction, Category } from '../db/db';
 import { parseAmountToInteger, formatAmountFromInteger } from '../utils/format';
-import { X, Tag, Trash2 } from 'lucide-react';
+import { X, Tag, Trash2, Calculator } from 'lucide-react';
+import { useLiveQuery } from 'dexie-react-hooks';
 
 interface AddTransactionFormProps {
   wallets: Wallet[];
@@ -9,8 +10,6 @@ interface AddTransactionFormProps {
   onClose: () => void;
   editTx?: Transaction;
 }
-
-const PRESET_CATEGORIES = ['طعام', 'مواصلات', 'تسوق', 'راتب', 'فواتير', 'صحة', 'ترفيه', 'أخرى'];
 
 export const AddTransactionForm: React.FC<AddTransactionFormProps> = ({ wallets, selectedDate, onClose, editTx }) => {
   const [type, setType] = useState<'income' | 'expense' | 'transfer'>('expense');
@@ -20,6 +19,11 @@ export const AddTransactionForm: React.FC<AddTransactionFormProps> = ({ wallets,
   const [category, setCategory] = useState('');
   const [notes, setNotes] = useState('');
   const [error, setError] = useState('');
+  
+  const [showCalculator, setShowCalculator] = useState(false);
+
+  const allCategories = useLiveQuery(() => db.categories.toArray(), []) || [];
+  const presetCategories = allCategories.filter(c => c.type === type || c.type === 'all');
 
   useEffect(() => {
     if (editTx) {
@@ -32,21 +36,66 @@ export const AddTransactionForm: React.FC<AddTransactionFormProps> = ({ wallets,
     }
   }, [editTx]);
 
+  const handleAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setAmount(val);
+    if (/[\+\-\*\/]/.test(val)) {
+      setShowCalculator(true);
+    } else {
+      setShowCalculator(false);
+    }
+  };
+
+  const handleCalculate = () => {
+    try {
+      // safe eval for basic math
+      const sanitized = amount.replace(/[^0-9\+\-\*\/\.]/g, '');
+      if (sanitized) {
+        // eslint-disable-next-line no-new-func
+        const result = new Function('return ' + sanitized)();
+        if (!isNaN(result) && isFinite(result)) {
+          setAmount(Number(result).toFixed(3).replace(/\.?0+$/, ''));
+          setShowCalculator(false);
+        }
+      }
+    } catch (e) {
+      setError('عملية حسابية غير صالحة');
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+
+    let finalAmount = amount;
+    if (showCalculator || /[\+\-\*\/]/.test(finalAmount)) {
+       try {
+         const sanitized = finalAmount.replace(/[^0-9\+\-\*\/\.]/g, '');
+         if (sanitized) {
+           const result = new Function('return ' + sanitized)();
+           if (!isNaN(result) && isFinite(result)) {
+             finalAmount = Number(result).toFixed(3).replace(/\.?0+$/, '');
+             setAmount(finalAmount);
+             setShowCalculator(false);
+           }
+         }
+       } catch (err) {
+         setError('عملية حسابية غير صالحة');
+         return;
+       }
+    }
 
     if (!walletId) {
       setError('يرجى إنشاء محفظة أولاً');
       return;
     }
 
-    if (!/^\d+(\.\d{1,3})?$/.test(amount)) {
+    if (!/^\d+(\.\d{1,3})?$/.test(finalAmount)) {
       setError('المبلغ غير صحيح. مسموح بحد أقصى 3 أرقام عشرية.');
       return;
     }
 
-    const amountInt = parseAmountToInteger(amount);
+    const amountInt = parseAmountToInteger(finalAmount);
     if (amountInt <= 0) {
       setError('يجب أن يكون المبلغ أكبر من صفر');
       return;
@@ -132,16 +181,24 @@ export const AddTransactionForm: React.FC<AddTransactionFormProps> = ({ wallets,
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-semibold text-muted-foreground mb-1">المبلغ</label>
-            <input
-              type="number"
-              step="0.001"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              className="w-full bg-background border border-border rounded-xl px-4 py-3 text-lg font-bold text-foreground focus:outline-none focus:border-accent transition-colors"
-              placeholder="0.000"
-              required
-            />
+            <label className="block text-sm font-semibold text-muted-foreground mb-1 flex justify-between">
+              المبلغ
+              {showCalculator && (
+                <button type="button" onClick={handleCalculate} className="text-accent text-xs flex items-center gap-1 hover:underline">
+                  <Calculator size={12} /> احسب
+                </button>
+              )}
+            </label>
+            <div className="relative">
+              <input
+                type="text"
+                value={amount}
+                onChange={handleAmountChange}
+                className="w-full bg-background border border-border rounded-xl px-4 py-3 text-lg font-bold text-foreground focus:outline-none focus:border-accent transition-colors"
+                placeholder="0.000 أو 50+20..."
+                required
+              />
+            </div>
           </div>
 
           <div>
@@ -178,16 +235,16 @@ export const AddTransactionForm: React.FC<AddTransactionFormProps> = ({ wallets,
                 الفئة
               </label>
               <div className="flex flex-wrap gap-2 mb-3">
-                 {PRESET_CATEGORIES.map(cat => (
+                 {presetCategories.map(cat => (
                    <button
-                     key={cat}
+                     key={cat.id || cat.name}
                      type="button"
-                     onClick={() => setCategory(cat)}
-                     className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors border ${
-                        category === cat ? 'bg-accent/20 border-accent/50 text-accent' : 'bg-muted border-border text-muted-foreground hover:bg-background'
+                     onClick={() => setCategory(cat.name)}
+                     className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors border flex items-center gap-1 ${
+                        category === cat.name ? 'bg-accent/20 border-accent/50 text-accent' : 'bg-muted border-border text-muted-foreground hover:bg-background'
                      }`}
                    >
-                     {cat}
+                     <span>{cat.emoji}</span> {cat.name}
                    </button>
                  ))}
               </div>

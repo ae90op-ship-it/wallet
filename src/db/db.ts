@@ -21,9 +21,40 @@ export interface Transaction {
   updatedAt?: number;
 }
 
+export interface Debt {
+  id?: number;
+  title: string;
+  type: 'to_me' | 'on_me';
+  amount: number; // Stored as integer (Amount * 1000)
+  remaining: number; // Stored as integer (Amount * 1000)
+  dueDate?: number; // Epoch UTC
+  createdAt: number;
+  updatedAt: number;
+  isDeleted?: boolean;
+}
+
+export interface Category {
+  id?: number;
+  name: string;
+  emoji: string;
+  type: 'expense' | 'income' | 'all';
+}
+
+export interface ActivityLog {
+  id?: number;
+  action: 'add' | 'edit' | 'delete' | 'restore' | 'pay_debt';
+  entityType: 'transaction' | 'wallet' | 'debt' | 'category';
+  entityId: number;
+  details: string;
+  timestamp: number;
+}
+
 export class WalletDB extends Dexie {
   wallets!: Table<Wallet, number>;
   transactions!: Table<Transaction, number>;
+  debts!: Table<Debt, number>;
+  categories!: Table<Category, number>;
+  activityLog!: Table<ActivityLog, number>;
 
   constructor() {
     super('WalletDB');
@@ -43,11 +74,48 @@ export class WalletDB extends Dexie {
         transaction.updatedAt = transaction.dateTime;
       });
     });
+
+    // Version 5 adds debts, categories, and activityLog
+    this.version(5).stores({
+      wallets: '++id, name',
+      transactions: '++id, walletId, dateTime, type, category, isDeleted',
+      debts: '++id, type, dueDate, isDeleted',
+      categories: '++id, type',
+      activityLog: '++id, timestamp, action, entityType'
+    }).upgrade(async tx => {
+      // Seed default categories
+      const PRESET_CATEGORIES = [
+        { name: 'طعام', emoji: '🍔', type: 'expense' },
+        { name: 'مواصلات', emoji: '🚗', type: 'expense' },
+        { name: 'تسوق', emoji: '🛍️', type: 'expense' },
+        { name: 'فواتير', emoji: '📄', type: 'expense' },
+        { name: 'صحة', emoji: '💊', type: 'expense' },
+        { name: 'ترفيه', emoji: '🎮', type: 'expense' },
+        { name: 'راتب', emoji: '💰', type: 'income' },
+        { name: 'أخرى', emoji: '✨', type: 'all' }
+      ];
+      await tx.table('categories').bulkAdd(PRESET_CATEGORIES);
+    });
+  }
+
+  async logActivity(action: ActivityLog['action'], entityType: ActivityLog['entityType'], entityId: number, details: string) {
+    try {
+      await this.activityLog.add({
+        action,
+        entityType,
+        entityId,
+        details,
+        timestamp: Date.now()
+      });
+      // Optionally trim the log to keep it under e.g., 500 items (not strictly required here since we limit display to 100)
+    } catch (e) {
+      console.error("Failed to log activity", e);
+    }
   }
 
   // Preemptive Fix: Atomicity in Transfers using Database Transactions
   async performTransfer(fromWalletId: number, toWalletId: number, amountInt: number, dateUtc: number, notes: string) {
-    return this.transaction('rw', this.wallets, this.transactions, async () => {
+    return this.transaction('rw', this.wallets, this.transactions, this.activityLog, async () => {
       const fromWallet = await this.wallets.get(fromWalletId);
       const toWallet = await this.wallets.get(toWalletId);
 
@@ -89,14 +157,14 @@ export class WalletDB extends Dexie {
 
   // Atomicity for regular income/expense
   async addTransaction(walletId: number, amountInt: number, type: 'income' | 'expense', dateUtc: number, category: string, notes: string) {
-    return this.transaction('rw', this.wallets, this.transactions, async () => {
+    return this.transaction('rw', this.wallets, this.transactions, this.activityLog, async () => {
       const wallet = await this.wallets.get(walletId);
       if (!wallet) throw new Error("المحفظة غير موجودة");
 
       const newBalance = type === 'income' ? wallet.balance + amountInt : wallet.balance - amountInt;
       await this.wallets.update(walletId, { balance: newBalance });
 
-      await this.transactions.add({
+      const txId = await this.transactions.add({
         walletId,
         amount: amountInt,
         type,
@@ -106,12 +174,13 @@ export class WalletDB extends Dexie {
         isDeleted: false,
         updatedAt: Date.now()
       });
+      await this.logActivity('add', 'transaction', txId as number, `إضافة ${type === 'income' ? 'دخل' : 'مصروف'} بمبلغ ${amountInt/1000}`);
     });
   }
 
   // Edit transaction
   async editTransaction(id: number, walletId: number, amountInt: number, type: 'income' | 'expense' | 'transfer', dateUtc: number, category: string, notes: string, toWalletId?: number) {
-    return this.transaction('rw', this.wallets, this.transactions, async () => {
+    return this.transaction('rw', this.wallets, this.transactions, this.activityLog, async () => {
       const oldTx = await this.transactions.get(id);
       if (!oldTx) throw new Error("المعاملة غير موجودة");
       
@@ -149,12 +218,13 @@ export class WalletDB extends Dexie {
       await this.transactions.update(id, {
         walletId, amount: amountInt, type, dateTime: dateUtc, category, notes, toWalletId, updatedAt: Date.now()
       });
+      await this.logActivity('edit', 'transaction', id, `تعديل معاملة بمبلغ ${amountInt/1000}`);
     });
   }
 
   // Soft delete transaction
   async softDeleteTransaction(id: number) {
-    return this.transaction('rw', this.wallets, this.transactions, async () => {
+    return this.transaction('rw', this.wallets, this.transactions, this.activityLog, async () => {
       const tx = await this.transactions.get(id);
       if (!tx || tx.isDeleted) return;
 
@@ -175,12 +245,13 @@ export class WalletDB extends Dexie {
       }
 
       await this.transactions.update(id, { isDeleted: true, deletedAt: Date.now() });
+      await this.logActivity('delete', 'transaction', id, `حذف معاملة بمبلغ ${tx.amount/1000}`);
     });
   }
 
   // Restore transaction
   async restoreTransaction(id: number) {
-    return this.transaction('rw', this.wallets, this.transactions, async () => {
+    return this.transaction('rw', this.wallets, this.transactions, this.activityLog, async () => {
       const tx = await this.transactions.get(id);
       if (!tx || !tx.isDeleted) return;
 
@@ -201,6 +272,7 @@ export class WalletDB extends Dexie {
       }
 
       await this.transactions.update(id, { isDeleted: false, deletedAt: undefined, updatedAt: Date.now() });
+      await this.logActivity('restore', 'transaction', id, `استعادة معاملة بمبلغ ${tx.amount/1000}`);
     });
   }
 

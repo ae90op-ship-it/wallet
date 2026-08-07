@@ -4,7 +4,7 @@ import { db } from '../db/db';
 import { formatCurrency } from '../utils/format';
 import { format } from 'date-fns';
 import { ar } from 'date-fns/locale';
-import { X, RefreshCcw, Trash2, Moon, Sun, Monitor, Palette, Coins, BarChart3, ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react';
+import { X, RefreshCcw, Trash2, Moon, Sun, Monitor, Palette, Coins, BarChart3, ChevronDown, ChevronUp, AlertTriangle, Download, Upload } from 'lucide-react';
 import { useSettings } from '../hooks/useSettings';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -87,10 +87,59 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({ onClose }) => 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteInput, setDeleteInput] = useState('');
 
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+
   const deletedTransactions = useLiveQuery(
     () => db.transactions.filter(tx => !!tx.isDeleted).toArray(),
     []
   ) || [];
+
+  const handleBackup = async () => {
+    try {
+      const w = await db.wallets.toArray();
+      const t = await db.transactions.toArray();
+      const d = await db.debts.toArray();
+      const c = await db.categories.toArray();
+      const a = await db.activityLog.toArray();
+      const backupData = { wallets: w, transactions: t, debts: d, categories: c, activityLog: a, exportedAt: Date.now() };
+      const blob = new Blob([JSON.stringify(backupData)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `نسخة_احتياطية_محفظتي_${format(new Date(), 'yyyy-MM-dd')}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert('فشل التصدير');
+    }
+  };
+
+  const handleRestoreBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const data = JSON.parse(event.target?.result as string);
+        if (data.wallets && data.transactions) {
+          await db.transactions.clear();
+          await db.wallets.clear();
+          await db.wallets.bulkAdd(data.wallets);
+          await db.transactions.bulkAdd(data.transactions);
+          if (data.debts) { await db.debts.clear(); await db.debts.bulkAdd(data.debts); }
+          if (data.categories) { await db.categories.clear(); await db.categories.bulkAdd(data.categories); }
+          if (data.activityLog) { await db.activityLog.clear(); await db.activityLog.bulkAdd(data.activityLog); }
+          alert("تم استعادة النسخة الاحتياطية بنجاح!");
+          window.location.reload();
+        } else {
+          alert("ملف النسخة الاحتياطية غير صالح.");
+        }
+      } catch (err) {
+        alert("فشل في قراءة الملف.");
+      }
+    };
+    reader.readAsText(file);
+  };
 
   const handleRestore = async (id: number) => {
     try {
@@ -111,6 +160,8 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({ onClose }) => 
     try {
       await db.transactions.clear();
       await db.wallets.clear();
+      await db.debts.clear();
+      await db.activityLog.clear();
       setShowDeleteConfirm(false);
       alert("تم حذف جميع البيانات بنجاح");
       window.location.reload();
@@ -136,12 +187,30 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({ onClose }) => 
         <div className="p-4 overflow-y-auto flex-1">
           
           <AccordionItem 
-            title="المظهر" 
+            title="المظهر واللغة" 
             icon={Palette} 
             isOpen={openSection === 'appearance'} 
             onToggle={() => setOpenSection(openSection === 'appearance' ? null : 'appearance')}
           >
             <div className="space-y-4">
+              <div>
+                <label className="text-sm text-muted-foreground mb-2 block">اللغة (Language)</label>
+                <div className="flex gap-2 bg-muted p-1 rounded-xl">
+                  <button
+                    onClick={() => updateSettings({ language: 'ar' })}
+                    className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-colors ${settings.language === 'ar' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                  >
+                    العربية
+                  </button>
+                  <button
+                    onClick={() => updateSettings({ language: 'en' })}
+                    className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-colors ${settings.language === 'en' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                  >
+                    English
+                  </button>
+                </div>
+              </div>
+
               <div>
                 <label className="text-sm text-muted-foreground mb-2 block">وضع الرؤية</label>
                 <div className="flex gap-2 bg-muted p-1 rounded-xl">
@@ -293,7 +362,17 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({ onClose }) => 
                 )}
               </div>
 
-              <div className="border-t border-border pt-4">
+              <div className="border-t border-border pt-4 space-y-4">
+                <div className="grid grid-cols-2 gap-2">
+                  <button onClick={handleBackup} className="flex items-center justify-center gap-2 py-3 bg-accent/10 text-accent hover:bg-accent/20 transition-colors rounded-xl font-bold text-sm">
+                    <Download size={18} /> تصدير نسخة (JSON)
+                  </button>
+                  <button onClick={() => fileInputRef.current?.click()} className="flex items-center justify-center gap-2 py-3 bg-muted text-foreground hover:bg-border transition-colors rounded-xl font-bold text-sm">
+                    <Upload size={18} /> استيراد (JSON)
+                  </button>
+                  <input type="file" accept=".json" className="hidden" ref={fileInputRef} onChange={handleRestoreBackup} />
+                </div>
+
                 {showDeleteConfirm ? (
                   <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl p-4 text-center">
                     <AlertTriangle className="mx-auto text-rose-500 mb-2" size={32} />

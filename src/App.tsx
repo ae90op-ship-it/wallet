@@ -10,7 +10,10 @@ import { AddTransactionForm } from './components/AddTransactionForm';
 import { WalletManager } from './components/WalletManager';
 import { ReportsManager } from './components/ReportsManager';
 import { SettingsManager } from './components/SettingsManager';
-import { Plus, Wallet as WalletIcon, FileText, Settings, Search, Tags } from 'lucide-react';
+import { DebtsManager } from './components/DebtsManager';
+import { ActivityLogManager } from './components/ActivityLogManager';
+import { QuickCategoryModal } from './components/QuickCategoryModal';
+import { Plus, Wallet as WalletIcon, FileText, Settings, Search, Tags, HandCoins, History } from 'lucide-react';
 import { format } from 'date-fns';
 import { ar } from 'date-fns/locale';
 import { useSettings } from './hooks/useSettings';
@@ -34,6 +37,9 @@ export default function App() {
   const [showWallets, setShowWallets] = useState(false);
   const [showReports, setShowReports] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showDebts, setShowDebts] = useState(false);
+  const [showActivity, setShowActivity] = useState(false);
+  const [showCategories, setShowCategories] = useState(false);
   
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchActive, setIsSearchActive] = useState(false);
@@ -54,15 +60,17 @@ export default function App() {
 
   // Filter for the day OR search results if active
   const displayTransactions = useMemo(() => {
+    let filtered = [];
     if (debouncedSearch) {
       const lowerQ = debouncedSearch.toLowerCase();
-      // Search across all month transactions for now (or all DB, but sticking to month for performance)
-      return monthTransactions.filter(tx => 
+      filtered = monthTransactions.filter(tx => 
          (tx.notes && tx.notes.toLowerCase().includes(lowerQ)) || 
          (tx.category && tx.category.toLowerCase().includes(lowerQ))
       );
+    } else {
+      filtered = monthTransactions.filter(tx => tx.dateTime >= startOfSelectedDay && tx.dateTime <= endOfSelectedDay);
     }
-    return monthTransactions.filter(tx => tx.dateTime >= startOfSelectedDay && tx.dateTime <= endOfSelectedDay);
+    return filtered.slice(0, 50); // Limit for performance
   }, [monthTransactions, startOfSelectedDay, endOfSelectedDay, debouncedSearch]);
 
   const dailyTransactionsRaw = monthTransactions.filter(tx => tx.dateTime >= startOfSelectedDay && tx.dateTime <= endOfSelectedDay);
@@ -90,18 +98,24 @@ export default function App() {
                <h1 className="text-2xl font-black tracking-tight text-foreground">محفظتي</h1>
                <p className="text-accent text-sm font-semibold opacity-90">دقة متناهية. تخزين محلي.</p>
             </div>
-            <div className="flex gap-2">
-              <button onClick={() => alert('إدارة الفئات السريعة: قيد التطوير')} className="p-2 bg-muted hover:bg-border rounded-full transition-colors text-foreground" title="الفئات السريعة">
-                <Tags size={20} />
+            <div className="flex gap-1.5 flex-wrap justify-end">
+              <button onClick={() => setShowCategories(true)} className="p-2 bg-muted hover:bg-border rounded-full transition-colors text-foreground" title="الفئات">
+                <Tags size={18} />
               </button>
-              <button onClick={() => setShowSettings(true)} className="p-2 bg-muted hover:bg-border rounded-full transition-colors text-foreground" title="الإعدادات">
-                <Settings size={20} />
+              <button onClick={() => setShowDebts(true)} className="p-2 bg-muted hover:bg-border rounded-full transition-colors text-foreground" title="الديون">
+                <HandCoins size={18} />
+              </button>
+              <button onClick={() => setShowActivity(true)} className="p-2 bg-muted hover:bg-border rounded-full transition-colors text-foreground" title="سجل النشاطات">
+                <History size={18} />
               </button>
               <button onClick={() => setShowReports(true)} className="p-2 bg-muted hover:bg-border rounded-full transition-colors text-foreground" title="التقارير">
-                <FileText size={20} />
+                <FileText size={18} />
               </button>
               <button onClick={() => setShowWallets(true)} className="p-2 bg-muted hover:bg-border rounded-full transition-colors text-foreground" title="المحافظ">
-                <WalletIcon size={20} />
+                <WalletIcon size={18} />
+              </button>
+              <button onClick={() => setShowSettings(true)} className="p-2 bg-muted hover:bg-border rounded-full transition-colors text-foreground" title="الإعدادات">
+                <Settings size={18} />
               </button>
             </div>
           </div>
@@ -188,6 +202,9 @@ export default function App() {
             onClose={() => setShowSettings(false)}
           />
         )}
+        {showDebts && <DebtsManager onClose={() => setShowDebts(false)} wallets={wallets} />}
+        {showActivity && <ActivityLogManager onClose={() => setShowActivity(false)} />}
+        {showCategories && <QuickCategoryModal onClose={() => setShowCategories(false)} />}
       </div>
     </div>
   );

@@ -9,6 +9,7 @@ export interface AppSettings {
   defaultReportPeriod: string;
   showPercentages: boolean;
   showCharts: boolean;
+  language: 'ar' | 'en';
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -20,6 +21,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   defaultReportPeriod: 'this_month',
   showPercentages: true,
   showCharts: true,
+  language: 'ar',
 };
 
 export function useSettings() {
@@ -53,6 +55,9 @@ export function useSettings() {
     const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
     const contrastColor = (yiq >= 128) ? '#0f172a' : '#ffffff';
     document.documentElement.style.setProperty('--accent-foreground', contrastColor);
+
+    // Apply language
+    document.dir = settings.language === 'ar' ? 'rtl' : 'ltr';
     
   }, [settings]);
 
