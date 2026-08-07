@@ -1,11 +1,12 @@
 import React, { useRef, useState } from 'react';
 import { db, Wallet, Transaction } from '../db/db';
-import { formatCurrency } from '../utils/format';
+import { formatCurrency, formatAmountFromInteger } from '../utils/format';
 import { format } from 'date-fns';
 import { ar } from 'date-fns/locale';
-import { X, FileDown, DatabaseBackup, Download, Upload } from 'lucide-react';
+import { X, FileDown, Download, Upload } from 'lucide-react';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 
 interface ReportsManagerProps {
   wallets: Wallet[];
@@ -13,41 +14,58 @@ interface ReportsManagerProps {
   onClose: () => void;
 }
 
+const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f43f5e', '#64748b'];
+
 export const ReportsManager: React.FC<ReportsManagerProps> = ({ wallets, transactions, onClose }) => {
   const [isExporting, setIsExporting] = useState(false);
   const reportRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // PDF Export handling Arabic by capturing HTML canvas
+  const totalWealth = wallets.reduce((acc, w) => acc + w.balance, 0);
+
+  const currentMonth = new Date().getMonth();
+  const currentYear = new Date().getFullYear();
+
+  const monthTransactions = transactions.filter(tx => {
+    const d = new Date(tx.dateTime);
+    return d.getMonth() === currentMonth && d.getFullYear() === currentYear && !tx.isDeleted;
+  });
+
+  const monthIncome = monthTransactions.filter(tx => tx.type === 'income').reduce((acc, tx) => acc + tx.amount, 0);
+  const monthExpense = monthTransactions.filter(tx => tx.type === 'expense').reduce((acc, tx) => acc + tx.amount, 0);
+
+  const expensesByCategory = monthTransactions
+    .filter(tx => tx.type === 'expense')
+    .reduce((acc, tx) => {
+      acc[tx.category] = (acc[tx.category] || 0) + tx.amount;
+      return acc;
+    }, {} as Record<string, number>);
+
+  const pieData = Object.entries(expensesByCategory).map(([name, value]) => ({
+    name,
+    value: parseFloat(formatAmountFromInteger(value))
+  })).sort((a, b) => b.value - a.value);
+
   const handleExportPDF = async () => {
     if (!reportRef.current) return;
     setIsExporting(true);
     try {
-      const canvas = await html2canvas(reportRef.current, {
-        scale: 2,
-        useCORS: true,
-      });
+      const canvas = await html2canvas(reportRef.current, { scale: 2, useCORS: true });
       const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF({
-        orientation: 'portrait',
-        unit: 'mm',
-        format: 'a4'
-      });
-      
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
       const pdfWidth = pdf.internal.pageSize.getWidth();
       const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
       
       pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
       pdf.save(`تقرير_محفظتي_${format(new Date(), 'yyyy-MM-dd')}.pdf`);
-    } catch (err) {
-      console.error("PDF Export failed", err);
-      alert("حدث خطأ أثناء تصدير التقرير");
+    } catch (e) {
+      console.error("PDF Export failed", e);
+      alert("فشل تصدير PDF.");
     } finally {
       setIsExporting(false);
     }
   };
 
-  // JSON Backup
   const handleBackup = async () => {
     try {
       const w = await db.wallets.toArray();
@@ -66,7 +84,6 @@ export const ReportsManager: React.FC<ReportsManagerProps> = ({ wallets, transac
     }
   };
 
-  // JSON Restore
   const handleRestore = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -76,7 +93,7 @@ export const ReportsManager: React.FC<ReportsManagerProps> = ({ wallets, transac
       try {
         const data = JSON.parse(event.target?.result as string);
         if (data.wallets && data.transactions) {
-          if (window.confirm("تحذير: سيتم مسح جميع البيانات الحالية واستبدالها بالنسخة الاحتياطية. هل أنت متأكد؟")) {
+          if (window.confirm("تحذير: سيتم مسح جميع البيانات الحالية. هل أنت متأكد؟")) {
             await db.transaction('rw', db.wallets, db.transactions, async () => {
               await db.wallets.clear();
               await db.transactions.clear();
@@ -84,99 +101,154 @@ export const ReportsManager: React.FC<ReportsManagerProps> = ({ wallets, transac
               await db.transactions.bulkAdd(data.transactions);
             });
             alert("تم استعادة البيانات بنجاح!");
-            window.location.reload(); // Refresh to update states
+            window.location.reload();
           }
-        } else {
-          alert("ملف النسخة الاحتياطية غير صالح");
         }
       } catch (err) {
-        alert("فشل قراءة الملف. تأكد من أنه ملف صالح.");
+        alert("فشل قراءة الملف.");
       }
     };
     reader.readAsText(file);
   };
 
-  const totalWealth = wallets.reduce((sum, w) => sum + w.balance, 0);
-
   return (
-    <div className="fixed inset-0 bg-[#0a0b0d]/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-      <div className="bg-[#1e2229] border border-[#303640] rounded-[32px] w-full max-w-md shadow-2xl max-h-[90vh] overflow-hidden flex flex-col">
-        <div className="flex justify-between items-center p-6 border-b border-[#303640]">
-          <h2 className="text-xl font-bold text-gray-100">التقارير والنسخ الاحتياطي</h2>
-          <button onClick={onClose} className="p-2 text-gray-400 hover:bg-[#303640] rounded-full transition-colors">
-            <X size={20} />
-          </button>
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+      <div className="bg-card border border-border rounded-[32px] w-full max-w-4xl p-6 shadow-2xl max-h-[90vh] overflow-y-auto flex flex-col">
+        <div className="flex justify-between items-center mb-6 sticky top-0 bg-card py-2 z-10 border-b border-border">
+          <h2 className="text-xl font-bold text-foreground">التقارير والإحصائيات</h2>
+          <div className="flex gap-2">
+             <button onClick={handleExportPDF} disabled={isExporting} className="flex items-center gap-2 bg-accent text-white px-4 py-2 rounded-xl hover:bg-accent/90 transition-colors font-bold text-sm shadow-sm">
+               <FileDown size={18} />
+               {isExporting ? 'جاري التصدير...' : 'تصدير PDF'}
+             </button>
+             <button onClick={onClose} className="p-2 text-muted-foreground hover:bg-muted rounded-full transition-colors">
+               <X size={20} />
+             </button>
+          </div>
         </div>
 
-        <div className="p-6 overflow-y-auto space-y-6">
-          <div className="grid grid-cols-2 gap-4">
-            <button 
-              onClick={handleExportPDF}
-              disabled={isExporting}
-              className="flex flex-col items-center justify-center gap-2 p-4 bg-[#14161a] text-[#10b981] rounded-2xl hover:bg-[#25282e] transition-colors border border-[#10b981]/30"
-            >
-              <FileDown size={28} />
-              <span className="font-bold text-sm">{isExporting ? 'جاري التصدير...' : 'تصدير PDF'}</span>
-            </button>
-            <button 
-              onClick={handleBackup}
-              className="flex flex-col items-center justify-center gap-2 p-4 bg-[#14161a] text-blue-400 rounded-2xl hover:bg-[#25282e] transition-colors border border-blue-400/30"
-            >
-              <Download size={28} />
-              <span className="font-bold text-sm">تصدير بيانات (JSON)</span>
-            </button>
-            <button 
-              onClick={() => fileInputRef.current?.click()}
-              className="flex flex-col items-center justify-center gap-2 p-4 bg-[#14161a] text-[#f59e0b] rounded-2xl hover:bg-[#25282e] transition-colors border border-[#f59e0b]/30 col-span-2"
-            >
-              <Upload size={28} />
-              <span className="font-bold text-sm">استيراد بيانات (JSON)</span>
-            </button>
-            <input type="file" accept=".json" className="hidden" ref={fileInputRef} onChange={handleRestore} />
-          </div>
-
-          {/* Hidden Report Div for PDF generation (Rendered off-screen essentially, but we show it here scaled down) */}
-          <div className="mt-8 border-t border-[#303640] pt-6">
-            <p className="text-sm text-gray-500 mb-4 text-center">معاينة التقرير (أبيض للخلفية)</p>
-            <div className="bg-white border border-gray-200 p-8 rounded-lg shadow-sm text-slate-900" ref={reportRef} dir="rtl">
-               <h1 className="text-2xl font-black text-slate-900 mb-6 text-center border-b pb-4">تقرير محفظتي</h1>
-               <div className="flex justify-between items-center mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="space-y-6">
+            <div className="bg-muted p-6 rounded-2xl border border-border">
+               <h3 className="text-sm font-bold text-muted-foreground mb-4">ملخص شهر {format(new Date(), 'MMMM', { locale: ar })}</h3>
+               <div className="grid grid-cols-2 gap-4">
                   <div>
-                     <p className="text-sm text-slate-500">تاريخ التقرير</p>
-                     <p className="font-bold text-slate-800">{format(new Date(), 'PPP', { locale: ar })}</p>
+                    <p className="text-xs text-muted-foreground mb-1">الإيرادات</p>
+                    <p className="text-xl font-bold text-emerald-500">{formatCurrency(monthIncome)}</p>
                   </div>
-                  <div className="text-left">
-                     <p className="text-sm text-slate-500">إجمالي الثروة</p>
-                     <p className="text-xl font-bold text-emerald-600">{formatCurrency(totalWealth)}</p>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">المصروفات</p>
+                    <p className="text-xl font-bold text-rose-500">{formatCurrency(monthExpense)}</p>
                   </div>
-               </div>
-
-               <div className="mb-8">
-                 <h2 className="text-lg font-bold text-slate-800 mb-4 border-b pb-2">المحافظ</h2>
-                 {wallets.map(w => (
-                   <div key={w.id} className="flex justify-between py-2 border-b border-slate-100 border-dashed">
-                     <span className="font-bold">{w.name}</span>
-                     <span className="font-bold">{formatCurrency(w.balance)}</span>
-                   </div>
-                 ))}
-               </div>
-
-               <div>
-                 <h2 className="text-lg font-bold text-slate-800 mb-4 border-b pb-2">آخر المعاملات</h2>
-                 {transactions.slice(0, 20).map(tx => (
-                   <div key={tx.id} className="flex justify-between items-center py-2 border-b border-slate-100 border-dashed text-sm">
-                     <div className="w-1/3">
-                        <span className="font-bold block">{tx.category}</span>
-                        <span className="text-xs text-slate-500">{format(new Date(tx.dateTime), 'PP', { locale: ar })}</span>
-                     </div>
-                     <div className="w-1/3 text-center text-slate-500">{tx.type === 'income' ? 'دخل' : tx.type === 'expense' ? 'مصروف' : 'تحويل'}</div>
-                     <div className="w-1/3 text-left font-bold" dir="ltr">{formatCurrency(tx.amount)}</div>
-                   </div>
-                 ))}
                </div>
             </div>
+
+            <div className="bg-muted p-6 rounded-2xl border border-border">
+               <h3 className="text-sm font-bold text-muted-foreground mb-4">أرصدة المحافظ</h3>
+               <div className="space-y-3">
+                 {wallets.map(w => (
+                   <div key={w.id} className="flex justify-between items-center">
+                     <span className="font-bold text-foreground">{w.name}</span>
+                     <span className="font-mono text-muted-foreground">{formatCurrency(w.balance)}</span>
+                   </div>
+                 ))}
+               </div>
+               <div className="mt-4 pt-4 border-t border-border flex justify-between items-center">
+                  <span className="font-bold text-foreground">الإجمالي</span>
+                  <span className="text-xl font-bold text-accent">{formatCurrency(totalWealth)}</span>
+               </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <button onClick={handleBackup} className="flex flex-col items-center justify-center gap-2 p-4 bg-muted text-blue-500 rounded-2xl hover:bg-border transition-colors border border-blue-500/30">
+                <Download size={24} />
+                <span className="font-bold text-xs">تصدير (JSON)</span>
+              </button>
+              <button onClick={() => fileInputRef.current?.click()} className="flex flex-col items-center justify-center gap-2 p-4 bg-muted text-accent rounded-2xl hover:bg-border transition-colors border border-accent/30">
+                <Upload size={24} />
+                <span className="font-bold text-xs">استيراد (JSON)</span>
+              </button>
+              <input type="file" accept=".json" className="hidden" ref={fileInputRef} onChange={handleRestore} />
+            </div>
+          </div>
+
+          <div className="bg-muted p-6 rounded-2xl border border-border flex flex-col">
+             <h3 className="text-sm font-bold text-muted-foreground mb-4">توزيع المصروفات (هذا الشهر)</h3>
+             {pieData.length > 0 ? (
+               <div className="flex-1 min-h-[300px]">
+                 <ResponsiveContainer width="100%" height="100%">
+                   <PieChart>
+                     <Pie
+                       data={pieData}
+                       cx="50%"
+                       cy="50%"
+                       innerRadius={60}
+                       outerRadius={90}
+                       paddingAngle={5}
+                       dataKey="value"
+                     >
+                       {pieData.map((entry, index) => (
+                         <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                       ))}
+                     </Pie>
+                     <Tooltip 
+                       formatter={(value: number) => [`$${value.toFixed(2)}`, 'المبلغ']}
+                       contentStyle={{ borderRadius: '12px', border: '1px solid var(--border)', backgroundColor: 'var(--card)' }}
+                       itemStyle={{ color: 'var(--foreground)' }}
+                     />
+                     <Legend />
+                   </PieChart>
+                 </ResponsiveContainer>
+               </div>
+             ) : (
+               <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
+                 لا توجد مصروفات مسجلة هذا الشهر
+               </div>
+             )}
           </div>
         </div>
+
+        <div className="mt-8 border-t border-border pt-6">
+          <p className="text-sm text-muted-foreground mb-4 text-center">معاينة التقرير (أبيض للخلفية)</p>
+          <div style={{ backgroundColor: '#ffffff', color: '#0f172a', border: '1px solid #e2e8f0' }} className="p-8 rounded-lg shadow-sm" ref={reportRef} dir="rtl">
+             <h1 className="text-2xl font-black mb-6 text-center pb-4" style={{ color: '#0f172a', borderBottom: '1px solid #e2e8f0' }}>تقرير محفظتي</h1>
+             <div className="flex justify-between items-center mb-8">
+                <div>
+                   <p className="text-sm" style={{ color: '#64748b' }}>تاريخ التقرير</p>
+                   <p className="font-bold" style={{ color: '#1e293b' }}>{format(new Date(), 'PPP', { locale: ar })}</p>
+                </div>
+                <div className="text-left">
+                   <p className="text-sm" style={{ color: '#64748b' }}>إجمالي الثروة</p>
+                   <p className="text-xl font-bold" style={{ color: '#059669' }}>{formatCurrency(totalWealth)}</p>
+                </div>
+             </div>
+
+             <div className="mb-8">
+               <h2 className="text-lg font-bold mb-4 pb-2" style={{ color: '#1e293b', borderBottom: '1px solid #e2e8f0' }}>المحافظ</h2>
+               {wallets.map(w => (
+                 <div key={w.id} className="flex justify-between py-2" style={{ borderBottom: '1px dashed #f1f5f9' }}>
+                   <span className="font-bold">{w.name}</span>
+                   <span className="font-bold">{formatCurrency(w.balance)}</span>
+                 </div>
+               ))}
+             </div>
+
+             <div>
+               <h2 className="text-lg font-bold mb-4 pb-2" style={{ color: '#1e293b', borderBottom: '1px solid #e2e8f0' }}>آخر المعاملات</h2>
+               {transactions.filter(tx => !tx.isDeleted).slice(0, 20).map(tx => (
+                 <div key={tx.id} className="flex justify-between items-center py-2 text-sm" style={{ borderBottom: '1px dashed #f1f5f9' }}>
+                   <div className="w-1/3">
+                      <span className="font-bold block">{tx.category}</span>
+                      <span className="text-xs" style={{ color: '#64748b' }}>{format(new Date(tx.dateTime), 'PP', { locale: ar })}</span>
+                   </div>
+                   <div className="w-1/3 text-center" style={{ color: '#64748b' }}>{tx.type === 'income' ? 'دخل' : tx.type === 'expense' ? 'مصروف' : 'تحويل'}</div>
+                   <div className="w-1/3 text-left font-bold" dir="ltr">{formatCurrency(tx.amount)}</div>
+                 </div>
+               ))}
+             </div>
+          </div>
+        </div>
+
       </div>
     </div>
   );

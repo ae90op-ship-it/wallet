@@ -16,6 +16,9 @@ export interface Transaction {
   category: string;
   notes: string;
   toWalletId?: number; // Only for transfers
+  isDeleted?: boolean;
+  deletedAt?: number;
+  updatedAt?: number;
 }
 
 export class WalletDB extends Dexie {
@@ -28,6 +31,17 @@ export class WalletDB extends Dexie {
     this.version(1).stores({
       wallets: '++id, name',
       transactions: '++id, walletId, dateTime, type, category'
+    });
+    
+    // Version 2 adds soft deletes and updates index
+    this.version(2).stores({
+      wallets: '++id, name',
+      transactions: '++id, walletId, dateTime, type, category, isDeleted'
+    }).upgrade(tx => {
+      return tx.table('transactions').toCollection().modify(transaction => {
+        transaction.isDeleted = false;
+        transaction.updatedAt = transaction.dateTime;
+      });
     });
   }
 
@@ -88,9 +102,111 @@ export class WalletDB extends Dexie {
         type,
         dateTime: dateUtc,
         category,
-        notes
+        notes,
+        isDeleted: false,
+        updatedAt: Date.now()
       });
     });
+  }
+
+  // Edit transaction
+  async editTransaction(id: number, walletId: number, amountInt: number, type: 'income' | 'expense' | 'transfer', dateUtc: number, category: string, notes: string, toWalletId?: number) {
+    return this.transaction('rw', this.wallets, this.transactions, async () => {
+      const oldTx = await this.transactions.get(id);
+      if (!oldTx) throw new Error("المعاملة غير موجودة");
+      
+      // Revert old transaction effect on balance
+      if (oldTx.type === 'transfer') {
+        const fromWallet = await this.wallets.get(oldTx.walletId);
+        const toWalletIdOld = oldTx.toWalletId;
+        if (toWalletIdOld) {
+           const toWallet = await this.wallets.get(toWalletIdOld);
+           if (fromWallet) await this.wallets.update(oldTx.walletId, { balance: fromWallet.balance + oldTx.amount });
+           if (toWallet) await this.wallets.update(toWalletIdOld, { balance: toWallet.balance - oldTx.amount });
+        }
+      } else {
+        const wallet = await this.wallets.get(oldTx.walletId);
+        if (wallet) {
+           const revertedBalance = oldTx.type === 'income' ? wallet.balance - oldTx.amount : wallet.balance + oldTx.amount;
+           await this.wallets.update(oldTx.walletId, { balance: revertedBalance });
+        }
+      }
+
+      // Apply new transaction effect
+      if (type === 'transfer' && toWalletId) {
+        const fromWallet = await this.wallets.get(walletId);
+        const toWallet = await this.wallets.get(toWalletId);
+        if (fromWallet) await this.wallets.update(walletId, { balance: fromWallet.balance - amountInt });
+        if (toWallet) await this.wallets.update(toWalletId, { balance: toWallet.balance + amountInt });
+      } else {
+        const wallet = await this.wallets.get(walletId);
+        if (wallet) {
+          const newBalance = type === 'income' ? wallet.balance + amountInt : wallet.balance - amountInt;
+          await this.wallets.update(walletId, { balance: newBalance });
+        }
+      }
+
+      await this.transactions.update(id, {
+        walletId, amount: amountInt, type, dateTime: dateUtc, category, notes, toWalletId, updatedAt: Date.now()
+      });
+    });
+  }
+
+  // Soft delete transaction
+  async softDeleteTransaction(id: number) {
+    return this.transaction('rw', this.wallets, this.transactions, async () => {
+      const tx = await this.transactions.get(id);
+      if (!tx || tx.isDeleted) return;
+
+      // Revert balance
+      if (tx.type === 'transfer') {
+         if (tx.toWalletId) {
+            const fromWallet = await this.wallets.get(tx.walletId);
+            const toWallet = await this.wallets.get(tx.toWalletId);
+            if (fromWallet) await this.wallets.update(tx.walletId, { balance: fromWallet.balance + tx.amount });
+            if (toWallet) await this.wallets.update(tx.toWalletId, { balance: toWallet.balance - tx.amount });
+         }
+      } else {
+         const wallet = await this.wallets.get(tx.walletId);
+         if (wallet) {
+            const revertedBalance = tx.type === 'income' ? wallet.balance - tx.amount : wallet.balance + tx.amount;
+            await this.wallets.update(tx.walletId, { balance: revertedBalance });
+         }
+      }
+
+      await this.transactions.update(id, { isDeleted: true, deletedAt: Date.now() });
+    });
+  }
+
+  // Restore transaction
+  async restoreTransaction(id: number) {
+    return this.transaction('rw', this.wallets, this.transactions, async () => {
+      const tx = await this.transactions.get(id);
+      if (!tx || !tx.isDeleted) return;
+
+      // Re-apply balance
+      if (tx.type === 'transfer') {
+         if (tx.toWalletId) {
+            const fromWallet = await this.wallets.get(tx.walletId);
+            const toWallet = await this.wallets.get(tx.toWalletId);
+            if (fromWallet) await this.wallets.update(tx.walletId, { balance: fromWallet.balance - tx.amount });
+            if (toWallet) await this.wallets.update(tx.toWalletId, { balance: toWallet.balance + tx.amount });
+         }
+      } else {
+         const wallet = await this.wallets.get(tx.walletId);
+         if (wallet) {
+            const newBalance = tx.type === 'income' ? wallet.balance + tx.amount : wallet.balance - tx.amount;
+            await this.wallets.update(tx.walletId, { balance: newBalance });
+         }
+      }
+
+      await this.transactions.update(id, { isDeleted: false, deletedAt: undefined, updatedAt: Date.now() });
+    });
+  }
+
+  // Permanent delete
+  async permanentDeleteTransaction(id: number) {
+     await this.transactions.delete(id);
   }
 }
 

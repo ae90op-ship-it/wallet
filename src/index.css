@@ -2,6 +2,32 @@
 
 @theme {
   --font-sans: "Cairo", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-border: var(--border);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+}
+
+@layer base {
+  :root {
+    --background: #f8fafc;
+    --foreground: #0f172a;
+    --card: #ffffff;
+    --border: #e2e8f0;
+    --muted: #f1f5f9;
+    --muted-foreground: #64748b;
+  }
+  
+  .dark {
+    --background: #0a0b0d;
+    --foreground: #f3f4f6;
+    --card: #14161a;
+    --border: #303640;
+    --muted: #1e2229;
+    --muted-foreground: #9ca3af;
+  }
 }
 
 /* Custom scrollbar for webkit */
