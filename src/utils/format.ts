@@ -17,10 +17,25 @@ export const formatAmountFromInteger = (amountInt: number): string => {
 };
 
 export const formatCurrency = (amountInt: number): string => {
-    const amountStr = (Math.abs(amountInt) / 1000).toFixed(3);
-    const parts = amountStr.split('.');
-    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-    return `${amountInt < 0 ? '-' : ''}${parts.join('.')} د.ك`; // Using Kuwaiti Dinar as example or generic currency
+    let currencyCode = 'EGP';
+    try {
+        const saved = localStorage.getItem('wallet_settings');
+        if (saved) {
+            const parsed = JSON.parse(saved);
+            if (parsed.currency) {
+                currencyCode = parsed.currency;
+            }
+        }
+    } catch(e) {}
+    
+    const floatAmount = amountInt / 1000;
+    
+    return new Intl.NumberFormat('ar-EG', {
+        style: 'currency',
+        currency: currencyCode,
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 3
+    }).format(floatAmount);
 };
 
 // Date utilities

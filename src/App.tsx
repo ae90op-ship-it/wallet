@@ -10,9 +10,10 @@ import { AddTransactionForm } from './components/AddTransactionForm';
 import { WalletManager } from './components/WalletManager';
 import { ReportsManager } from './components/ReportsManager';
 import { SettingsManager } from './components/SettingsManager';
-import { Plus, Wallet as WalletIcon, FileText, Settings, Search } from 'lucide-react';
+import { Plus, Wallet as WalletIcon, FileText, Settings, Search, Tags } from 'lucide-react';
 import { format } from 'date-fns';
 import { ar } from 'date-fns/locale';
+import { useSettings } from './hooks/useSettings';
 
 // Debounce hook
 function useDebounce<T>(value: T, delay: number): T {
@@ -25,6 +26,8 @@ function useDebounce<T>(value: T, delay: number): T {
 }
 
 export default function App() {
+  const { settings, updateSettings } = useSettings();
+  
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [showAddForm, setShowAddForm] = useState(false);
   const [editTx, setEditTx] = useState<Transaction | undefined>(undefined);
@@ -35,21 +38,6 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchActive, setIsSearchActive] = useState(false);
   const debouncedSearch = useDebounce(searchQuery, 300);
-
-  // Theme support
-  const [isDarkMode, setIsDarkMode] = useState(() => {
-    return localStorage.getItem('theme') !== 'light'; // Default to dark
-  });
-
-  useEffect(() => {
-    if (isDarkMode) {
-      document.documentElement.classList.add('dark');
-      localStorage.setItem('theme', 'dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-      localStorage.setItem('theme', 'light');
-    }
-  }, [isDarkMode]);
 
   const wallets = useLiveQuery(() => db.wallets.toArray(), []) || [];
   
@@ -103,13 +91,16 @@ export default function App() {
                <p className="text-accent text-sm font-semibold opacity-90">دقة متناهية. تخزين محلي.</p>
             </div>
             <div className="flex gap-2">
-              <button onClick={() => setShowSettings(true)} className="p-2 bg-muted hover:bg-border rounded-full transition-colors text-foreground">
+              <button onClick={() => alert('إدارة الفئات السريعة: قيد التطوير')} className="p-2 bg-muted hover:bg-border rounded-full transition-colors text-foreground" title="الفئات السريعة">
+                <Tags size={20} />
+              </button>
+              <button onClick={() => setShowSettings(true)} className="p-2 bg-muted hover:bg-border rounded-full transition-colors text-foreground" title="الإعدادات">
                 <Settings size={20} />
               </button>
-              <button onClick={() => setShowReports(true)} className="p-2 bg-muted hover:bg-border rounded-full transition-colors text-foreground">
+              <button onClick={() => setShowReports(true)} className="p-2 bg-muted hover:bg-border rounded-full transition-colors text-foreground" title="التقارير">
                 <FileText size={20} />
               </button>
-              <button onClick={() => setShowWallets(true)} className="p-2 bg-muted hover:bg-border rounded-full transition-colors text-foreground">
+              <button onClick={() => setShowWallets(true)} className="p-2 bg-muted hover:bg-border rounded-full transition-colors text-foreground" title="المحافظ">
                 <WalletIcon size={20} />
               </button>
             </div>
@@ -195,8 +186,6 @@ export default function App() {
         {showSettings && (
           <SettingsManager 
             onClose={() => setShowSettings(false)}
-            isDarkMode={isDarkMode}
-            toggleTheme={() => setIsDarkMode(!isDarkMode)}
           />
         )}
       </div>

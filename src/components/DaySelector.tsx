@@ -37,10 +37,10 @@ export const DaySelector: React.FC<DaySelectorProps> = ({ currentDate, selectedD
             key={date.getTime()}
             onClick={() => onDateSelect(date)}
             className={`flex flex-col items-center justify-center min-w-[60px] h-[80px] rounded-full border transition-all ${
-              isSelected ? 'bg-accent border-accent text-white shadow-lg shadow-accent/30 scale-110 z-10' : 'bg-card border-border text-foreground hover:bg-muted'
+              isSelected ? 'bg-accent border-accent text-[var(--accent-foreground)] shadow-lg shadow-accent/40 scale-110 z-10' : 'bg-card border-border text-foreground hover:bg-muted'
             }`}
           >
-            <span className={`text-xs mb-1 ${isSelected ? 'text-white/90' : 'text-muted-foreground'}`}>
+            <span className={`text-xs mb-1 font-bold ${isSelected ? 'opacity-90' : 'text-muted-foreground'}`}>
               {format(date, 'EEEEEE', { locale: ar })}
             </span>
             <span className="text-xl font-black">

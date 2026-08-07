@@ -8,6 +8,8 @@
   --color-border: var(--border);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
 }
 
 @layer base {
@@ -18,6 +20,8 @@
     --border: #e2e8f0;
     --muted: #f1f5f9;
     --muted-foreground: #64748b;
+    --accent: #f59e0b;
+    --accent-foreground: #ffffff;
   }
   
   .dark {
@@ -27,6 +31,20 @@
     --border: #303640;
     --muted: #1e2229;
     --muted-foreground: #9ca3af;
+  }
+}
+
+/* Print styles for vector PDF */
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
   }
 }
 

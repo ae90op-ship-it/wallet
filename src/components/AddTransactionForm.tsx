@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db, Wallet, Transaction } from '../db/db';
 import { parseAmountToInteger, formatAmountFromInteger } from '../utils/format';
-import { X, Tag } from 'lucide-react';
+import { X, Tag, Trash2 } from 'lucide-react';
 
 interface AddTransactionFormProps {
   wallets: Wallet[];
@@ -89,9 +89,26 @@ export const AddTransactionForm: React.FC<AddTransactionFormProps> = ({ wallets,
       <div className="bg-card border border-border rounded-[32px] w-full max-w-md p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-xl font-bold text-foreground">{editTx ? 'تعديل المعاملة' : 'إضافة معاملة'}</h2>
-          <button onClick={onClose} className="p-2 text-muted-foreground hover:bg-muted rounded-full transition-colors">
-            <X size={20} />
-          </button>
+          <div className="flex items-center gap-2">
+            {editTx && (
+              <button 
+                onClick={async () => {
+                  if (window.confirm("هل تريد بالتأكيد حذف هذه المعاملة؟")) {
+                    await db.softDeleteTransaction(editTx.id!);
+                    onClose();
+                  }
+                }} 
+                className="p-2 text-rose-500 hover:bg-rose-500/10 rounded-full transition-colors"
+                type="button"
+                title="حذف"
+              >
+                <Trash2 size={20} />
+              </button>
+            )}
+            <button onClick={onClose} className="p-2 text-muted-foreground hover:bg-muted rounded-full transition-colors">
+              <X size={20} />
+            </button>
+          </div>
         </div>
 
         <div className="flex bg-muted p-1 rounded-2xl mb-6">
