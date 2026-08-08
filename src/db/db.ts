@@ -38,15 +38,31 @@ export interface Category {
   name: string;
   emoji: string;
   type: 'expense' | 'income' | 'all';
+  isDeleted?: boolean;
+  deletedAt?: number;
 }
 
 export interface ActivityLog {
   id?: number;
   action: 'add' | 'edit' | 'delete' | 'restore' | 'pay_debt';
-  entityType: 'transaction' | 'wallet' | 'debt' | 'category';
+  entityType: 'transaction' | 'wallet' | 'debt' | 'category' | 'bill';
   entityId: number;
   details: string;
   timestamp: number;
+}
+
+export interface Bill {
+  id?: number;
+  title: string;
+  accountNumber?: string;
+  amount: number; // Stored as integer
+  dueDate: number; // Epoch UTC
+  isPaid: boolean;
+  walletId?: number; // Optional, wallet used to pay
+  createdAt: number;
+  updatedAt: number;
+  isDeleted?: boolean;
+  deletedAt?: number;
 }
 
 export class WalletDB extends Dexie {
@@ -55,6 +71,7 @@ export class WalletDB extends Dexie {
   debts!: Table<Debt, number>;
   categories!: Table<Category, number>;
   activityLog!: Table<ActivityLog, number>;
+  bills!: Table<Bill, number>;
 
   constructor() {
     super('WalletDB');
@@ -75,26 +92,35 @@ export class WalletDB extends Dexie {
       });
     });
 
-    // Version 5 adds debts, categories, and activityLog
-    this.version(5).stores({
+    // Version 6 adds bills and isDeleted to categories
+    this.version(6).stores({
       wallets: '++id, name',
       transactions: '++id, walletId, dateTime, type, category, isDeleted',
       debts: '++id, type, dueDate, isDeleted',
-      categories: '++id, type',
-      activityLog: '++id, timestamp, action, entityType'
+      categories: '++id, type, isDeleted',
+      activityLog: '++id, timestamp, action, entityType',
+      bills: '++id, dueDate, isPaid, isDeleted'
     }).upgrade(async tx => {
-      // Seed default categories
-      const PRESET_CATEGORIES = [
-        { name: 'طعام', emoji: '🍔', type: 'expense' },
-        { name: 'مواصلات', emoji: '🚗', type: 'expense' },
-        { name: 'تسوق', emoji: '🛍️', type: 'expense' },
-        { name: 'فواتير', emoji: '📄', type: 'expense' },
-        { name: 'صحة', emoji: '💊', type: 'expense' },
-        { name: 'ترفيه', emoji: '🎮', type: 'expense' },
-        { name: 'راتب', emoji: '💰', type: 'income' },
-        { name: 'أخرى', emoji: '✨', type: 'all' }
-      ];
-      await tx.table('categories').bulkAdd(PRESET_CATEGORIES);
+      // Seed default categories if none exist
+      const count = await tx.table('categories').count();
+      if (count === 0) {
+        const PRESET_CATEGORIES = [
+          { name: 'طعام', emoji: '🍔', type: 'expense' },
+          { name: 'مواصلات', emoji: '🚗', type: 'expense' },
+          { name: 'تسوق', emoji: '🛍️', type: 'expense' },
+          { name: 'فواتير', emoji: '📄', type: 'expense' },
+          { name: 'صحة', emoji: '💊', type: 'expense' },
+          { name: 'ترفيه', emoji: '🎮', type: 'expense' },
+          { name: 'راتب', emoji: '💰', type: 'income' },
+          { name: 'أخرى', emoji: '✨', type: 'all' }
+        ];
+        await tx.table('categories').bulkAdd(PRESET_CATEGORIES);
+      }
+      
+      // Upgrade existing categories to have isDeleted
+      await tx.table('categories').toCollection().modify(c => {
+         if (c.isDeleted === undefined) c.isDeleted = false;
+      });
     });
   }
 
@@ -279,6 +305,22 @@ export class WalletDB extends Dexie {
   // Permanent delete
   async permanentDeleteTransaction(id: number) {
      await this.transactions.delete(id);
+  }
+  async cleanOldTrash() {
+    const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const cutoff = now - THIRTY_DAYS;
+
+    try {
+      await this.transaction('rw', this.transactions, this.debts, this.categories, this.bills, async () => {
+        await this.transactions.filter(tx => !!tx.isDeleted && !!tx.deletedAt && tx.deletedAt < cutoff).delete();
+        await this.debts.filter(d => !!d.isDeleted && !!d.deletedAt && d.deletedAt < cutoff).delete();
+        await this.categories.filter(c => !!c.isDeleted && !!c.deletedAt && c.deletedAt < cutoff).delete();
+        await this.bills.filter(b => !!b.isDeleted && !!b.deletedAt && b.deletedAt < cutoff).delete();
+      });
+    } catch (e) {
+      console.error("Failed to clean old trash", e);
+    }
   }
 }
 

@@ -26,9 +26,13 @@ export const QuickCategoryModal: React.FC<QuickCategoryModalProps> = ({ onClose 
     setNewCatEmoji('🛒');
   };
 
-  const handleDelete = async (id: number) => {
-    if (window.confirm("حذف هذه الفئة؟")) {
-      await db.categories.delete(id);
+  const handleDelete = async (cat: Category) => {
+    if (window.confirm("حذف هذه الفئة؟ سيتم نقلها لسلة المهملات.")) {
+      await db.transaction('rw', db.categories, db.transactions, async () => {
+        await db.categories.update(cat.id!, { isDeleted: true, deletedAt: Date.now() });
+        // Soft delete all transactions with this category
+        await db.transactions.filter(tx => tx.category === cat.name && !tx.isDeleted).modify({ isDeleted: true, deletedAt: Date.now() });
+      });
     }
   };
 
@@ -96,7 +100,7 @@ export const QuickCategoryModal: React.FC<QuickCategoryModalProps> = ({ onClose 
                     </span>
                   </div>
                 </div>
-                <button onClick={() => handleDelete(cat.id!)} className="text-muted-foreground hover:text-rose-500 p-2">
+                <button onClick={() => handleDelete(cat)} className="text-muted-foreground hover:text-rose-500 p-2">
                   <Trash2 size={16} />
                 </button>
               </div>

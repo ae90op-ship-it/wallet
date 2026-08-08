@@ -9,7 +9,7 @@ export interface AppSettings {
   defaultReportPeriod: string;
   showPercentages: boolean;
   showCharts: boolean;
-  language: 'ar' | 'en';
+  language: string;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -57,7 +57,10 @@ export function useSettings() {
     document.documentElement.style.setProperty('--accent-foreground', contrastColor);
 
     // Apply language
-    document.dir = settings.language === 'ar' ? 'rtl' : 'ltr';
+    const rtlLangs = ['ar', 'he', 'fa', 'ur', 'dv', 'ps', 'ku'];
+    const isRtl = rtlLangs.includes(settings.language.toLowerCase());
+    document.dir = isRtl ? 'rtl' : 'ltr';
+    document.documentElement.lang = settings.language;
     
   }, [settings]);
 

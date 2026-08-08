@@ -87,6 +87,10 @@ export default function App() {
     setShowAddForm(true);
   };
 
+  useEffect(() => {
+    db.cleanOldTrash();
+  }, []);
+
   return (
     <div className="min-h-screen bg-background flex justify-center items-center w-full p-4 sm:p-6 transition-colors duration-300">
       <div className="w-full h-[90vh] max-w-md bg-card rounded-[48px] border-[8px] border-border shadow-2xl relative flex flex-col overflow-hidden">

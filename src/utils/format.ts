@@ -40,5 +40,8 @@ export const formatCurrency = (amountInt: number): string => {
 
 // Date utilities
 export const getStartOfDayUTC = (date: Date): number => {
-    return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+    // Fix Date Offset Bug: Use local device timezone instead of UTC
+    const newDate = new Date(date);
+    newDate.setHours(0, 0, 0, 0);
+    return newDate.getTime();
 };

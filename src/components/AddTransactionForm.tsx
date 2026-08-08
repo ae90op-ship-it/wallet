@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { db, Wallet, Transaction, Category } from '../db/db';
 import { parseAmountToInteger, formatAmountFromInteger } from '../utils/format';
-import { X, Tag, Trash2, Calculator } from 'lucide-react';
+import { X, Tag, Trash2 } from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { AmountInput } from './AmountInput';
 
 interface AddTransactionFormProps {
   wallets: Wallet[];
@@ -19,8 +20,6 @@ export const AddTransactionForm: React.FC<AddTransactionFormProps> = ({ wallets,
   const [category, setCategory] = useState('');
   const [notes, setNotes] = useState('');
   const [error, setError] = useState('');
-  
-  const [showCalculator, setShowCalculator] = useState(false);
 
   const allCategories = useLiveQuery(() => db.categories.toArray(), []) || [];
   const presetCategories = allCategories.filter(c => c.type === type || c.type === 'all');
@@ -36,47 +35,20 @@ export const AddTransactionForm: React.FC<AddTransactionFormProps> = ({ wallets,
     }
   }, [editTx]);
 
-  const handleAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value;
-    setAmount(val);
-    if (/[\+\-\*\/]/.test(val)) {
-      setShowCalculator(true);
-    } else {
-      setShowCalculator(false);
-    }
-  };
-
-  const handleCalculate = () => {
-    try {
-      // safe eval for basic math
-      const sanitized = amount.replace(/[^0-9\+\-\*\/\.]/g, '');
-      if (sanitized) {
-        // eslint-disable-next-line no-new-func
-        const result = new Function('return ' + sanitized)();
-        if (!isNaN(result) && isFinite(result)) {
-          setAmount(Number(result).toFixed(3).replace(/\.?0+$/, ''));
-          setShowCalculator(false);
-        }
-      }
-    } catch (e) {
-      setError('عملية حسابية غير صالحة');
-    }
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
     let finalAmount = amount;
-    if (showCalculator || /[\+\-\*\/]/.test(finalAmount)) {
+    // Check if it's still a calculation
+    if (/[\+\-\*\/]/.test(finalAmount)) {
        try {
          const sanitized = finalAmount.replace(/[^0-9\+\-\*\/\.]/g, '');
          if (sanitized) {
+           // eslint-disable-next-line no-new-func
            const result = new Function('return ' + sanitized)();
            if (!isNaN(result) && isFinite(result)) {
              finalAmount = Number(result).toFixed(3).replace(/\.?0+$/, '');
-             setAmount(finalAmount);
-             setShowCalculator(false);
            }
          }
        } catch (err) {
@@ -180,26 +152,8 @@ export const AddTransactionForm: React.FC<AddTransactionFormProps> = ({ wallets,
         {error && <div className="bg-rose-500/10 border border-rose-500/20 text-rose-500 p-3 rounded-xl mb-4 text-sm font-semibold">{error}</div>}
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-semibold text-muted-foreground mb-1 flex justify-between">
-              المبلغ
-              {showCalculator && (
-                <button type="button" onClick={handleCalculate} className="text-accent text-xs flex items-center gap-1 hover:underline">
-                  <Calculator size={12} /> احسب
-                </button>
-              )}
-            </label>
-            <div className="relative">
-              <input
-                type="text"
-                value={amount}
-                onChange={handleAmountChange}
-                className="w-full bg-background border border-border rounded-xl px-4 py-3 text-lg font-bold text-foreground focus:outline-none focus:border-accent transition-colors"
-                placeholder="0.000 أو 50+20..."
-                required
-              />
-            </div>
-          </div>
+          
+          <AmountInput value={amount} onChange={setAmount} onError={setError} />
 
           <div>
             <label className="block text-sm font-semibold text-muted-foreground mb-1">من محفظة</label>

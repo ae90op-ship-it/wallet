@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, Debt, Wallet } from '../db/db';
+import { db, Debt, Wallet, Bill } from '../db/db';
 import { formatCurrency, parseAmountToInteger, formatAmountFromInteger } from '../utils/format';
 import { format } from 'date-fns';
 import { ar } from 'date-fns/locale';
-import { X, Plus, CreditCard, ArrowDownLeft, ArrowUpRight, CheckCircle2 } from 'lucide-react';
+import { X, Plus, CreditCard, ArrowDownLeft, ArrowUpRight, CheckCircle2, FileText, Zap } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface DebtsManagerProps {
@@ -13,7 +13,10 @@ interface DebtsManagerProps {
 }
 
 export const DebtsManager: React.FC<DebtsManagerProps> = ({ onClose, wallets }) => {
-  const [showAddForm, setShowAddForm] = useState(false);
+  const [activeTab, setActiveTab] = useState<'debts' | 'bills'>('debts');
+
+  // Debts State
+  const [showAddDebtForm, setShowAddDebtForm] = useState(false);
   const [title, setTitle] = useState('');
   const [type, setType] = useState<'to_me' | 'on_me'>('to_me');
   const [amount, setAmount] = useState('');
@@ -23,7 +26,17 @@ export const DebtsManager: React.FC<DebtsManagerProps> = ({ onClose, wallets }) 
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentWalletId, setPaymentWalletId] = useState<number>(wallets[0]?.id || 0);
 
+  // Bills State
+  const [showAddBillForm, setShowAddBillForm] = useState(false);
+  const [billTitle, setBillTitle] = useState('');
+  const [billAccountNumber, setBillAccountNumber] = useState('');
+  const [billAmount, setBillAmount] = useState('');
+  const [billDueDate, setBillDueDate] = useState('');
+  const [payBillId, setPayBillId] = useState<number | null>(null);
+  const [billWalletId, setBillWalletId] = useState<number>(wallets[0]?.id || 0);
+
   const debts = useLiveQuery(() => db.debts.filter(d => !d.isDeleted).toArray(), []) || [];
+  const bills = useLiveQuery(() => db.bills.filter(b => !b.isDeleted).toArray(), []) || [];
 
   const handleAddDebt = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -48,7 +61,7 @@ export const DebtsManager: React.FC<DebtsManagerProps> = ({ onClose, wallets }) 
     setTitle('');
     setAmount('');
     setDueDate('');
-    setShowAddForm(false);
+    setShowAddDebtForm(false);
   };
 
   const handlePayDebt = async (e: React.FormEvent) => {
@@ -91,121 +104,339 @@ export const DebtsManager: React.FC<DebtsManagerProps> = ({ onClose, wallets }) 
     setPaymentAmount('');
   };
 
+  const handleAddBill = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!billTitle || !billAmount || !billDueDate) return;
+
+    const amountInt = parseAmountToInteger(billAmount);
+    await db.bills.add({
+      title: billTitle,
+      accountNumber: billAccountNumber,
+      amount: amountInt,
+      dueDate: new Date(billDueDate).getTime(),
+      isPaid: false,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      isDeleted: false
+    });
+
+    setBillTitle('');
+    setBillAccountNumber('');
+    setBillAmount('');
+    setBillDueDate('');
+    setShowAddBillForm(false);
+  };
+
+  const handlePayBill = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!payBillId || !billWalletId) return;
+
+    await db.transaction('rw', db.bills, db.wallets, db.transactions, db.activityLog, async () => {
+      const bill = await db.bills.get(payBillId);
+      if (!bill) return;
+
+      await db.bills.update(payBillId, { isPaid: true, walletId: billWalletId, updatedAt: Date.now() });
+
+      await db.transactions.add({
+        walletId: billWalletId,
+        amount: bill.amount,
+        type: 'expense',
+        dateTime: Date.now(),
+        category: 'فواتير',
+        notes: `سداد فاتورة: ${bill.title} ${bill.accountNumber ? `(رقم: ${bill.accountNumber})` : ''}`,
+        isDeleted: false,
+        updatedAt: Date.now()
+      });
+
+      const wallet = await db.wallets.get(billWalletId);
+      if (wallet) {
+        await db.wallets.update(billWalletId, { balance: wallet.balance - bill.amount });
+      }
+
+      await db.logActivity('pay_debt', 'bill', payBillId, `تم سداد فاتورة ${bill.title}`);
+    });
+
+    setPayBillId(null);
+  };
+
   return (
     <div className="fixed inset-0 bg-background/80 backdrop-blur-md flex items-center justify-center p-4 z-50">
-      <div className="bg-card border border-border rounded-[32px] w-full max-w-2xl h-[80vh] flex flex-col shadow-2xl overflow-hidden">
+      <div className="bg-card border border-border rounded-[32px] w-full max-w-2xl h-[85vh] flex flex-col shadow-2xl overflow-hidden">
         
         <div className="flex justify-between items-center p-6 border-b border-border bg-card z-10">
           <div className="flex items-center gap-3">
              <CreditCard className="text-accent" size={24} />
-             <h2 className="text-xl font-bold text-foreground">إدارة الديون والالتزامات</h2>
+             <h2 className="text-xl font-bold text-foreground">الديون والفواتير</h2>
           </div>
           <button onClick={onClose} className="p-2 text-muted-foreground hover:bg-muted rounded-full transition-colors">
             <X size={20} />
           </button>
         </div>
 
+        <div className="flex gap-2 p-4 border-b border-border">
+          <button
+            onClick={() => setActiveTab('debts')}
+            className={`flex-1 py-3 text-sm font-bold rounded-xl transition-colors flex items-center justify-center gap-2 ${activeTab === 'debts' ? 'bg-accent text-white shadow-sm' : 'bg-muted text-muted-foreground hover:text-foreground'}`}
+          >
+            <CreditCard size={18} /> الديون
+          </button>
+          <button
+            onClick={() => setActiveTab('bills')}
+            className={`flex-1 py-3 text-sm font-bold rounded-xl transition-colors flex items-center justify-center gap-2 ${activeTab === 'bills' ? 'bg-accent text-white shadow-sm' : 'bg-muted text-muted-foreground hover:text-foreground'}`}
+          >
+            <Zap size={18} /> الفواتير
+          </button>
+        </div>
+
         <div className="p-6 overflow-y-auto flex-1">
-          <div className="flex justify-between items-center mb-6">
-            <h3 className="font-bold text-foreground">الديون الحالية</h3>
-            <button 
-              onClick={() => setShowAddForm(!showAddForm)}
-              className="bg-accent text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-accent/90 transition-colors shadow-sm"
-            >
-              <Plus size={16} /> إضافة دين
-            </button>
-          </div>
+          {activeTab === 'debts' ? (
+            <>
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="font-bold text-foreground">الديون الحالية</h3>
+                <button 
+                  onClick={() => setShowAddDebtForm(!showAddDebtForm)}
+                  className="bg-accent text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-accent/90 transition-colors shadow-sm"
+                >
+                  <Plus size={16} /> إضافة دين
+                </button>
+              </div>
 
-          <AnimatePresence>
-            {showAddForm && (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
-                exit={{ opacity: 0, height: 0 }}
-                className="mb-8 bg-muted p-5 rounded-2xl border border-border overflow-hidden"
-              >
-                <form onSubmit={handleAddDebt} className="space-y-4">
-                  <div className="flex bg-card p-1 rounded-xl">
-                    <button type="button" onClick={() => setType('to_me')} className={`flex-1 py-2 text-sm font-bold rounded-lg transition-colors ${type === 'to_me' ? 'bg-emerald-500 text-white' : 'text-muted-foreground hover:bg-muted'}`}>دين لي (ديون خارجية)</button>
-                    <button type="button" onClick={() => setType('on_me')} className={`flex-1 py-2 text-sm font-bold rounded-lg transition-colors ${type === 'on_me' ? 'bg-rose-500 text-white' : 'text-muted-foreground hover:bg-muted'}`}>دين علي (التزامات)</button>
-                  </div>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-semibold text-muted-foreground mb-1">اسم المديون / الدائن</label>
-                      <input type="text" required value={title} onChange={e => setTitle(e.target.value)} className="w-full bg-card border border-border rounded-xl px-4 py-2 text-foreground focus:border-accent outline-none" placeholder="مثال: أحمد، قرض بنك..." />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-muted-foreground mb-1">المبلغ الإجمالي</label>
-                      <input type="number" required step="0.001" value={amount} onChange={e => setAmount(e.target.value)} className="w-full bg-card border border-border rounded-xl px-4 py-2 text-foreground focus:border-accent outline-none" placeholder="0.00" />
-                    </div>
-                    <div className="md:col-span-2">
-                      <label className="block text-xs font-semibold text-muted-foreground mb-1">تاريخ الاستحقاق (اختياري)</label>
-                      <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className="w-full bg-card border border-border rounded-xl px-4 py-2 text-foreground focus:border-accent outline-none" />
-                    </div>
-                  </div>
-                  
-                  <div className="flex justify-end gap-2 mt-4">
-                    <button type="button" onClick={() => setShowAddForm(false)} className="px-4 py-2 bg-card text-foreground rounded-xl text-sm font-bold border border-border">إلغاء</button>
-                    <button type="submit" className="px-4 py-2 bg-accent text-white rounded-xl text-sm font-bold shadow-sm">حفظ الدين</button>
-                  </div>
-                </form>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          <div className="space-y-4">
-            {debts.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground">لا توجد ديون مسجلة.</div>
-            ) : (
-              debts.map(debt => {
-                const isPaid = debt.remaining <= 0;
-                return (
-                  <div key={debt.id} className="bg-card border border-border rounded-2xl p-4 shadow-sm flex flex-col md:flex-row justify-between md:items-center gap-4">
-                    <div className="flex items-start gap-3">
-                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${debt.type === 'to_me' ? 'bg-emerald-500/20 text-emerald-500' : 'bg-rose-500/20 text-rose-500'}`}>
-                        {debt.type === 'to_me' ? <ArrowDownLeft size={20} /> : <ArrowUpRight size={20} />}
+              <AnimatePresence>
+                {showAddDebtForm && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="mb-8 bg-muted p-5 rounded-2xl border border-border overflow-hidden"
+                  >
+                    <form onSubmit={handleAddDebt} className="space-y-4">
+                      <div className="flex bg-card p-1 rounded-xl">
+                        <button type="button" onClick={() => setType('to_me')} className={`flex-1 py-2 text-sm font-bold rounded-lg transition-colors ${type === 'to_me' ? 'bg-emerald-500 text-white' : 'text-muted-foreground hover:bg-muted'}`}>دين لي (ديون خارجية)</button>
+                        <button type="button" onClick={() => setType('on_me')} className={`flex-1 py-2 text-sm font-bold rounded-lg transition-colors ${type === 'on_me' ? 'bg-rose-500 text-white' : 'text-muted-foreground hover:bg-muted'}`}>دين علي (التزامات)</button>
                       </div>
-                      <div>
-                        <h4 className="font-bold text-foreground flex items-center gap-2">
-                          {debt.title}
-                          {isPaid && <span className="bg-emerald-500/20 text-emerald-600 text-[10px] px-2 py-0.5 rounded-full flex items-center gap-1"><CheckCircle2 size={12}/> مكتمل</span>}
-                        </h4>
-                        <div className="flex gap-4 text-xs mt-1">
-                          <span className="text-muted-foreground">الإجمالي: <span className="font-bold text-foreground">{formatCurrency(debt.amount)}</span></span>
-                          {!isPaid && <span className="text-accent">المتبقي: <span className="font-bold">{formatCurrency(debt.remaining)}</span></span>}
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-semibold text-muted-foreground mb-1">اسم المديون / الدائن</label>
+                          <input type="text" required value={title} onChange={e => setTitle(e.target.value)} className="w-full bg-card border border-border rounded-xl px-4 py-2 text-foreground focus:border-accent outline-none" placeholder="مثال: أحمد، قرض بنك..." />
                         </div>
-                        {debt.dueDate && !isPaid && (
-                          <p className="text-[10px] text-muted-foreground mt-1 font-mono">
-                            تاريخ الاستحقاق: {format(new Date(debt.dueDate), 'PP', { locale: ar })}
-                          </p>
+                        <div>
+                          <label className="block text-xs font-semibold text-muted-foreground mb-1">المبلغ الإجمالي</label>
+                          <input type="number" required step="0.001" value={amount} onChange={e => setAmount(e.target.value)} className="w-full bg-card border border-border rounded-xl px-4 py-2 text-foreground focus:border-accent outline-none" placeholder="0.00" />
+                        </div>
+                        <div className="md:col-span-2">
+                          <label className="block text-xs font-semibold text-muted-foreground mb-1">تاريخ الاستحقاق (اختياري)</label>
+                          <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className="w-full bg-card border border-border rounded-xl px-4 py-2 text-foreground focus:border-accent outline-none" />
+                        </div>
+                      </div>
+                      
+                      <div className="flex justify-end gap-2 mt-4">
+                        <button type="button" onClick={() => setShowAddDebtForm(false)} className="px-4 py-2 bg-card text-foreground rounded-xl text-sm font-bold border border-border">إلغاء</button>
+                        <button type="submit" className="px-4 py-2 bg-accent text-white rounded-xl text-sm font-bold shadow-sm">حفظ الدين</button>
+                      </div>
+                    </form>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <div className="space-y-4">
+                {debts.length === 0 ? (
+                  <div className="text-center py-12 text-muted-foreground">لا توجد ديون مسجلة.</div>
+                ) : (
+                  debts.map(debt => {
+                    const isPaid = debt.remaining <= 0;
+                    return (
+                      <div key={debt.id} className="bg-card border border-border rounded-2xl p-4 shadow-sm flex flex-col md:flex-row justify-between md:items-center gap-4">
+                        <div className="flex items-start gap-3">
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${debt.type === 'to_me' ? 'bg-emerald-500/20 text-emerald-500' : 'bg-rose-500/20 text-rose-500'}`}>
+                            {debt.type === 'to_me' ? <ArrowDownLeft size={20} /> : <ArrowUpRight size={20} />}
+                          </div>
+                          <div>
+                            <h4 className="font-bold text-foreground flex items-center gap-2">
+                              {debt.title}
+                              {isPaid && <span className="bg-emerald-500/20 text-emerald-600 text-[10px] px-2 py-0.5 rounded-full flex items-center gap-1"><CheckCircle2 size={12}/> مكتمل</span>}
+                            </h4>
+                            <div className="flex gap-4 text-xs mt-1">
+                              <span className="text-muted-foreground">الإجمالي: <span className="font-bold text-foreground">{formatCurrency(debt.amount)}</span></span>
+                              {!isPaid && <span className="text-accent">المتبقي: <span className="font-bold">{formatCurrency(debt.remaining)}</span></span>}
+                            </div>
+                            {debt.dueDate && !isPaid && (
+                              <p className="text-[10px] text-muted-foreground mt-1 font-mono">
+                                تاريخ الاستحقاق: {format(new Date(debt.dueDate), 'PP', { locale: ar })}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                        
+                        {!isPaid ? (
+                          paymentDebtId === debt.id ? (
+                            <form onSubmit={handlePayDebt} className="flex gap-2 flex-col sm:flex-row bg-muted p-2 rounded-xl">
+                              <input type="number" required step="0.001" placeholder="المبلغ..." value={paymentAmount} onChange={e => setPaymentAmount(e.target.value)} className="w-full sm:w-24 bg-card border border-border rounded-lg px-2 py-1.5 text-sm outline-none" />
+                              <select value={paymentWalletId} onChange={e => setPaymentWalletId(Number(e.target.value))} className="w-full sm:w-28 bg-card border border-border rounded-lg px-2 py-1.5 text-sm outline-none">
+                                {wallets.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                              </select>
+                              <div className="flex gap-1">
+                                <button type="submit" className="bg-emerald-500 text-white px-3 py-1.5 rounded-lg text-sm font-bold shrink-0">سداد</button>
+                                <button type="button" onClick={() => setPaymentDebtId(null)} className="bg-card border border-border px-2 py-1.5 rounded-lg text-sm">إلغاء</button>
+                              </div>
+                            </form>
+                          ) : (
+                            <div className="flex gap-2">
+                               <button onClick={() => { setPaymentDebtId(debt.id!); setPaymentAmount(formatAmountFromInteger(debt.remaining)); }} className="self-start md:self-auto bg-muted hover:bg-border transition-colors text-foreground px-4 py-2 rounded-xl text-sm font-bold border border-border">
+                                تسديد دفعة
+                              </button>
+                              <button onClick={async () => {
+                                if (window.confirm("حذف هذا الدين؟ سيتم نقله والمرفقات لسلة المهملات.")) {
+                                  await db.transaction('rw', db.debts, db.transactions, async () => {
+                                    await db.debts.update(debt.id!, { isDeleted: true, deletedAt: Date.now() });
+                                    await db.transactions.filter(tx => tx.category === `سداد دين: ${debt.title}` && !tx.isDeleted).modify({ isDeleted: true, deletedAt: Date.now() });
+                                  });
+                                }
+                              }} className="p-2 text-rose-500 hover:bg-rose-500/10 rounded-xl transition-colors">
+                                <X size={18} />
+                              </button>
+                            </div>
+                          )
+                        ) : (
+                            <button onClick={async () => {
+                              if (window.confirm("حذف هذا الدين؟ سيتم نقله والمرفقات لسلة المهملات.")) {
+                                await db.transaction('rw', db.debts, db.transactions, async () => {
+                                  await db.debts.update(debt.id!, { isDeleted: true, deletedAt: Date.now() });
+                                  await db.transactions.filter(tx => tx.category === `سداد دين: ${debt.title}` && !tx.isDeleted).modify({ isDeleted: true, deletedAt: Date.now() });
+                                });
+                              }
+                            }} className="p-2 text-rose-500 hover:bg-rose-500/10 rounded-xl transition-colors">
+                              <X size={18} />
+                            </button>
                         )}
                       </div>
-                    </div>
-                    
-                    {!isPaid ? (
-                      paymentDebtId === debt.id ? (
-                        <form onSubmit={handlePayDebt} className="flex gap-2 flex-col sm:flex-row bg-muted p-2 rounded-xl">
-                          <input type="number" required step="0.001" placeholder="المبلغ..." value={paymentAmount} onChange={e => setPaymentAmount(e.target.value)} className="w-full sm:w-24 bg-card border border-border rounded-lg px-2 py-1.5 text-sm outline-none" />
-                          <select value={paymentWalletId} onChange={e => setPaymentWalletId(Number(e.target.value))} className="w-full sm:w-28 bg-card border border-border rounded-lg px-2 py-1.5 text-sm outline-none">
-                            {wallets.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-                          </select>
-                          <div className="flex gap-1">
-                            <button type="submit" className="bg-emerald-500 text-white px-3 py-1.5 rounded-lg text-sm font-bold shrink-0">سداد</button>
-                            <button type="button" onClick={() => setPaymentDebtId(null)} className="bg-card border border-border px-2 py-1.5 rounded-lg text-sm">إلغاء</button>
+                    );
+                  })
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="font-bold text-foreground">الفواتير</h3>
+                <button 
+                  onClick={() => setShowAddBillForm(!showAddBillForm)}
+                  className="bg-accent text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-accent/90 transition-colors shadow-sm"
+                >
+                  <Plus size={16} /> إضافة فاتورة
+                </button>
+              </div>
+
+              <AnimatePresence>
+                {showAddBillForm && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="mb-8 bg-muted p-5 rounded-2xl border border-border overflow-hidden"
+                  >
+                    <form onSubmit={handleAddBill} className="space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-semibold text-muted-foreground mb-1">اسم الخدمة (كهرباء، إنترنت...)</label>
+                          <input type="text" required value={billTitle} onChange={e => setBillTitle(e.target.value)} className="w-full bg-card border border-border rounded-xl px-4 py-2 text-foreground focus:border-accent outline-none" placeholder="الكهرباء" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-muted-foreground mb-1">المبلغ المطلوب</label>
+                          <input type="number" required step="0.001" value={billAmount} onChange={e => setBillAmount(e.target.value)} className="w-full bg-card border border-border rounded-xl px-4 py-2 text-foreground focus:border-accent outline-none" placeholder="0.00" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-muted-foreground mb-1">رقم الحساب / العداد (اختياري)</label>
+                          <input type="text" value={billAccountNumber} onChange={e => setBillAccountNumber(e.target.value)} className="w-full bg-card border border-border rounded-xl px-4 py-2 text-foreground focus:border-accent outline-none" placeholder="123456789" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-muted-foreground mb-1">تاريخ الاستحقاق</label>
+                          <input type="date" required value={billDueDate} onChange={e => setBillDueDate(e.target.value)} className="w-full bg-card border border-border rounded-xl px-4 py-2 text-foreground focus:border-accent outline-none" />
+                        </div>
+                      </div>
+                      
+                      <div className="flex justify-end gap-2 mt-4">
+                        <button type="button" onClick={() => setShowAddBillForm(false)} className="px-4 py-2 bg-card text-foreground rounded-xl text-sm font-bold border border-border">إلغاء</button>
+                        <button type="submit" className="px-4 py-2 bg-accent text-white rounded-xl text-sm font-bold shadow-sm">حفظ الفاتورة</button>
+                      </div>
+                    </form>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <div className="space-y-4">
+                {bills.length === 0 ? (
+                  <div className="text-center py-12 text-muted-foreground">لا توجد فواتير مسجلة.</div>
+                ) : (
+                  bills.map(bill => (
+                    <div key={bill.id} className="bg-card border border-border rounded-2xl p-4 shadow-sm flex flex-col md:flex-row justify-between md:items-center gap-4">
+                      <div className="flex items-start gap-3">
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${bill.isPaid ? 'bg-emerald-500/20 text-emerald-500' : 'bg-orange-500/20 text-orange-500'}`}>
+                          <FileText size={20} />
+                        </div>
+                        <div>
+                          <h4 className="font-bold text-foreground flex items-center gap-2">
+                            {bill.title}
+                            {bill.isPaid && <span className="bg-emerald-500/20 text-emerald-600 text-[10px] px-2 py-0.5 rounded-full flex items-center gap-1"><CheckCircle2 size={12}/> مدفوعة</span>}
+                          </h4>
+                          {bill.accountNumber && <p className="text-xs text-muted-foreground mt-0.5">رقم الحساب: {bill.accountNumber}</p>}
+                          <div className="flex gap-4 text-xs mt-1">
+                            <span className="text-foreground font-bold">{formatCurrency(bill.amount)}</span>
                           </div>
-                        </form>
+                          {!bill.isPaid && (
+                            <p className={`text-[10px] mt-1 font-mono ${bill.dueDate < Date.now() ? 'text-rose-500 font-bold' : 'text-muted-foreground'}`}>
+                              الاستحقاق: {format(new Date(bill.dueDate), 'PP', { locale: ar })}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      
+                      {!bill.isPaid ? (
+                        payBillId === bill.id ? (
+                          <form onSubmit={handlePayBill} className="flex gap-2 flex-col sm:flex-row bg-muted p-2 rounded-xl">
+                            <select value={billWalletId} onChange={e => setBillWalletId(Number(e.target.value))} className="w-full sm:w-28 bg-card border border-border rounded-lg px-2 py-1.5 text-sm outline-none">
+                              {wallets.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                            </select>
+                            <div className="flex gap-1">
+                              <button type="submit" className="bg-emerald-500 text-white px-3 py-1.5 rounded-lg text-sm font-bold shrink-0">دفع</button>
+                              <button type="button" onClick={() => setPayBillId(null)} className="bg-card border border-border px-2 py-1.5 rounded-lg text-sm">إلغاء</button>
+                            </div>
+                          </form>
+                        ) : (
+                          <div className="flex gap-2">
+                            <button onClick={() => setPayBillId(bill.id!)} className="self-start md:self-auto bg-accent hover:bg-accent/90 transition-colors text-white px-4 py-2 rounded-xl text-sm font-bold shadow-sm">
+                              تسديد
+                            </button>
+                            <button onClick={async () => {
+                              if (window.confirm("حذف هذه الفاتورة؟ سيتم نقلها والمرفقات لسلة المهملات.")) {
+                                await db.transaction('rw', db.bills, db.transactions, async () => {
+                                  await db.bills.update(bill.id!, { isDeleted: true, deletedAt: Date.now() });
+                                  await db.transactions.filter(tx => tx.category === 'فواتير' && tx.notes?.startsWith(`سداد فاتورة: ${bill.title}`) && !tx.isDeleted).modify({ isDeleted: true, deletedAt: Date.now() });
+                                });
+                              }
+                            }} className="p-2 text-rose-500 hover:bg-rose-500/10 rounded-xl transition-colors">
+                              <X size={18} />
+                            </button>
+                          </div>
+                        )
                       ) : (
-                        <button onClick={() => { setPaymentDebtId(debt.id!); setPaymentAmount(formatAmountFromInteger(debt.remaining)); }} className="self-start md:self-auto bg-muted hover:bg-border transition-colors text-foreground px-4 py-2 rounded-xl text-sm font-bold border border-border">
-                          تسديد دفعة
-                        </button>
-                      )
-                    ) : null}
-                  </div>
-                );
-              })
-            )}
-          </div>
+                         <button onClick={async () => {
+                            if (window.confirm("حذف هذه الفاتورة؟ سيتم نقلها والمرفقات لسلة المهملات.")) {
+                              await db.transaction('rw', db.bills, db.transactions, async () => {
+                                await db.bills.update(bill.id!, { isDeleted: true, deletedAt: Date.now() });
+                                await db.transactions.filter(tx => tx.category === 'فواتير' && tx.notes?.startsWith(`سداد فاتورة: ${bill.title}`) && !tx.isDeleted).modify({ isDeleted: true, deletedAt: Date.now() });
+                              });
+                            }
+                         }} className="p-2 text-rose-500 hover:bg-rose-500/10 rounded-xl transition-colors">
+                            <X size={18} />
+                         </button>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </>
+          )}
         </div>
 
       </div>

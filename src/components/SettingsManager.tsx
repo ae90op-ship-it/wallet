@@ -4,8 +4,9 @@ import { db } from '../db/db';
 import { formatCurrency } from '../utils/format';
 import { format } from 'date-fns';
 import { ar } from 'date-fns/locale';
-import { X, RefreshCcw, Trash2, Moon, Sun, Monitor, Palette, Coins, BarChart3, ChevronDown, ChevronUp, AlertTriangle, Download, Upload } from 'lucide-react';
+import { X, RefreshCcw, Trash2, Moon, Sun, Monitor, Palette, Coins, BarChart3, ChevronDown, ChevronUp, AlertTriangle, Download, Upload, Languages } from 'lucide-react';
 import { useSettings } from '../hooks/useSettings';
+import { APP_LANGUAGES } from '../utils/languages';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface SettingsManagerProps {
@@ -93,6 +94,23 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({ onClose }) => 
     () => db.transactions.filter(tx => !!tx.isDeleted).toArray(),
     []
   ) || [];
+  
+  const deletedDebts = useLiveQuery(
+    () => db.debts.filter(d => !!d.isDeleted).toArray(),
+    []
+  ) || [];
+  
+  const deletedCategories = useLiveQuery(
+    () => db.categories.filter(c => !!c.isDeleted).toArray(),
+    []
+  ) || [];
+  
+  const deletedBills = useLiveQuery(
+    () => db.bills.filter(b => !!b.isDeleted).toArray(),
+    []
+  ) || [];
+
+  const totalTrash = deletedTransactions.length + deletedDebts.length + deletedCategories.length + deletedBills.length;
 
   const handleBackup = async () => {
     try {
@@ -111,6 +129,39 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({ onClose }) => 
       URL.revokeObjectURL(url);
     } catch (e) {
       alert('فشل التصدير');
+    }
+  };
+
+  const handleExportCSV = async () => {
+    try {
+      const txs = await db.transactions.toArray();
+      const wallets = await db.wallets.toArray();
+      
+      const walletMap = new Map();
+      wallets.forEach(w => walletMap.set(w.id, w.name));
+
+      let csv = 'التاريخ,النوع,المحفظة,المبلغ,الفئة,الملاحظات\n';
+      txs.forEach(tx => {
+        if (tx.isDeleted) return; // Skip deleted
+        const date = format(new Date(tx.dateTime), 'yyyy-MM-dd HH:mm');
+        const type = tx.type === 'income' ? 'دخل' : tx.type === 'expense' ? 'مصروف' : 'تحويل';
+        const wallet = walletMap.get(tx.walletId) || 'غير معروف';
+        const amount = (tx.amount / 1000).toFixed(3);
+        const category = tx.category || '';
+        const notes = (tx.notes || '').replace(/,/g, ' '); // simple escape
+        csv += `${date},${type},${wallet},${amount},${category},${notes}\n`;
+      });
+      
+      // UTF-8 BOM for Arabic support in Excel
+      const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `المعاملات_${format(new Date(), 'yyyy-MM-dd')}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert('فشل التصدير إلى CSV');
     }
   };
 
@@ -141,17 +192,36 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({ onClose }) => 
     reader.readAsText(file);
   };
 
-  const handleRestore = async (id: number) => {
+  const handleRestore = async (id: number, type: 'tx' | 'debt' | 'cat' | 'bill') => {
     try {
-      await db.restoreTransaction(id);
+      if (type === 'tx') await db.restoreTransaction(id);
+      else if (type === 'debt') await db.debts.update(id, { isDeleted: false, deletedAt: undefined });
+      else if (type === 'cat') await db.categories.update(id, { isDeleted: false, deletedAt: undefined });
+      else if (type === 'bill') await db.bills.update(id, { isDeleted: false, deletedAt: undefined });
     } catch (e) {
       alert("فشلت عملية الاستعادة");
     }
   };
 
-  const handlePermanentDelete = async (id: number) => {
+  const handlePermanentDelete = async (id: number, type: 'tx' | 'debt' | 'cat' | 'bill') => {
     if (window.confirm("هل أنت متأكد من الحذف النهائي؟")) {
-      await db.permanentDeleteTransaction(id);
+      if (type === 'tx') await db.permanentDeleteTransaction(id);
+      else if (type === 'debt') await db.debts.delete(id);
+      else if (type === 'cat') await db.categories.delete(id);
+      else if (type === 'bill') await db.bills.delete(id);
+    }
+  };
+
+  const handleEmptyTrash = async () => {
+    if (window.confirm("هل أنت متأكد من إفراغ سلة المحذوفات بالكامل؟")) {
+      try {
+        await db.transactions.filter(tx => !!tx.isDeleted).delete();
+        await db.debts.filter(d => !!d.isDeleted).delete();
+        await db.categories.filter(c => !!c.isDeleted).delete();
+        await db.bills.filter(b => !!b.isDeleted).delete();
+      } catch (e) {
+        alert("فشل إفراغ السلة");
+      }
     }
   };
 
@@ -170,8 +240,14 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({ onClose }) => 
     }
   };
 
+  const [languageSearch, setLanguageSearch] = useState('');
+  
   const filteredCurrencies = COMMON_CURRENCIES.filter(c => 
     c.name.includes(currencySearch) || c.code.toLowerCase().includes(currencySearch.toLowerCase())
+  );
+  
+  const filteredLanguages = APP_LANGUAGES.filter(l => 
+    l.name.toLowerCase().includes(languageSearch.toLowerCase()) || l.code.toLowerCase().includes(languageSearch.toLowerCase())
   );
 
   return (
@@ -187,30 +263,42 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({ onClose }) => 
         <div className="p-4 overflow-y-auto flex-1">
           
           <AccordionItem 
-            title="المظهر واللغة" 
+            title="اللغة" 
+            icon={Languages} 
+            isOpen={openSection === 'language'} 
+            onToggle={() => setOpenSection(openSection === 'language' ? null : 'language')}
+          >
+            <div className="space-y-4">
+              <input 
+                type="text"
+                placeholder="البحث عن لغة..."
+                value={languageSearch}
+                onChange={e => setLanguageSearch(e.target.value)}
+                className="w-full bg-muted border border-border rounded-xl px-4 py-2 text-sm text-foreground focus:border-accent outline-none"
+              />
+              <div className="max-h-48 overflow-y-auto space-y-1 pr-2">
+                {filteredLanguages.map(l => (
+                  <button
+                    key={l.code}
+                    onClick={() => updateSettings({ language: l.code })}
+                    className={`w-full flex justify-between items-center p-3 rounded-xl transition-colors ${
+                      settings.language === l.code ? 'bg-accent/10 text-accent font-bold border border-accent/20' : 'hover:bg-muted text-foreground'
+                    }`}
+                  >
+                    <span>{l.name}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </AccordionItem>
+
+          <AccordionItem 
+            title="المظهر" 
             icon={Palette} 
             isOpen={openSection === 'appearance'} 
             onToggle={() => setOpenSection(openSection === 'appearance' ? null : 'appearance')}
           >
             <div className="space-y-4">
-              <div>
-                <label className="text-sm text-muted-foreground mb-2 block">اللغة (Language)</label>
-                <div className="flex gap-2 bg-muted p-1 rounded-xl">
-                  <button
-                    onClick={() => updateSettings({ language: 'ar' })}
-                    className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-colors ${settings.language === 'ar' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-                  >
-                    العربية
-                  </button>
-                  <button
-                    onClick={() => updateSettings({ language: 'en' })}
-                    className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-colors ${settings.language === 'en' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-                  >
-                    English
-                  </button>
-                </div>
-              </div>
-
               <div>
                 <label className="text-sm text-muted-foreground mb-2 block">وضع الرؤية</label>
                 <div className="flex gap-2 bg-muted p-1 rounded-xl">
@@ -341,20 +429,62 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({ onClose }) => 
           >
             <div className="space-y-4">
               <div className="mb-6">
-                <h4 className="text-sm font-bold text-foreground mb-2">سلة المحذوفات ({deletedTransactions.length})</h4>
-                {deletedTransactions.length === 0 ? (
+                <div className="flex justify-between items-center mb-2">
+                  <h4 className="text-sm font-bold text-foreground">سلة المحذوفات ({totalTrash})</h4>
+                  {totalTrash > 0 && (
+                    <button onClick={handleEmptyTrash} className="text-xs text-rose-500 hover:underline">
+                      إفراغ السلة
+                    </button>
+                  )}
+                </div>
+                {totalTrash === 0 ? (
                   <p className="text-xs text-muted-foreground">سلة المحذوفات فارغة</p>
                 ) : (
-                  <div className="max-h-40 overflow-y-auto space-y-2">
+                  <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
                     {deletedTransactions.map(tx => (
-                      <div key={tx.id} className="p-3 bg-muted rounded-xl flex justify-between items-center">
+                      <div key={`tx-${tx.id}`} className="p-3 bg-muted rounded-xl flex justify-between items-center border border-border">
                         <div>
-                          <p className="font-bold text-sm text-foreground">{tx.category}</p>
+                          <p className="font-bold text-sm text-foreground">معاملة: {tx.category}</p>
                           <p className="text-[10px] text-muted-foreground">{formatCurrency(tx.amount)}</p>
                         </div>
-                        <div className="flex gap-2">
-                          <button onClick={() => handleRestore(tx.id!)} className="p-1.5 bg-emerald-500/10 text-emerald-600 rounded-lg hover:bg-emerald-500/20"><RefreshCcw size={14}/></button>
-                          <button onClick={() => handlePermanentDelete(tx.id!)} className="p-1.5 bg-rose-500/10 text-rose-600 rounded-lg hover:bg-rose-500/20"><Trash2 size={14}/></button>
+                        <div className="flex gap-2 shrink-0">
+                          <button onClick={() => handleRestore(tx.id!, 'tx')} className="p-1.5 bg-emerald-500/10 text-emerald-600 rounded-lg hover:bg-emerald-500/20"><RefreshCcw size={14}/></button>
+                          <button onClick={() => handlePermanentDelete(tx.id!, 'tx')} className="p-1.5 bg-rose-500/10 text-rose-600 rounded-lg hover:bg-rose-500/20"><Trash2 size={14}/></button>
+                        </div>
+                      </div>
+                    ))}
+                    {deletedDebts.map(d => (
+                      <div key={`debt-${d.id}`} className="p-3 bg-muted rounded-xl flex justify-between items-center border border-border">
+                        <div>
+                          <p className="font-bold text-sm text-foreground">دين: {d.title}</p>
+                          <p className="text-[10px] text-muted-foreground">{formatCurrency(d.amount)}</p>
+                        </div>
+                        <div className="flex gap-2 shrink-0">
+                          <button onClick={() => handleRestore(d.id!, 'debt')} className="p-1.5 bg-emerald-500/10 text-emerald-600 rounded-lg hover:bg-emerald-500/20"><RefreshCcw size={14}/></button>
+                          <button onClick={() => handlePermanentDelete(d.id!, 'debt')} className="p-1.5 bg-rose-500/10 text-rose-600 rounded-lg hover:bg-rose-500/20"><Trash2 size={14}/></button>
+                        </div>
+                      </div>
+                    ))}
+                    {deletedCategories.map(c => (
+                      <div key={`cat-${c.id}`} className="p-3 bg-muted rounded-xl flex justify-between items-center border border-border">
+                        <div>
+                          <p className="font-bold text-sm text-foreground">فئة: {c.name} {c.emoji}</p>
+                        </div>
+                        <div className="flex gap-2 shrink-0">
+                          <button onClick={() => handleRestore(c.id!, 'cat')} className="p-1.5 bg-emerald-500/10 text-emerald-600 rounded-lg hover:bg-emerald-500/20"><RefreshCcw size={14}/></button>
+                          <button onClick={() => handlePermanentDelete(c.id!, 'cat')} className="p-1.5 bg-rose-500/10 text-rose-600 rounded-lg hover:bg-rose-500/20"><Trash2 size={14}/></button>
+                        </div>
+                      </div>
+                    ))}
+                    {deletedBills.map(b => (
+                      <div key={`bill-${b.id}`} className="p-3 bg-muted rounded-xl flex justify-between items-center border border-border">
+                        <div>
+                          <p className="font-bold text-sm text-foreground">فاتورة: {b.title}</p>
+                          <p className="text-[10px] text-muted-foreground">{formatCurrency(b.amount)}</p>
+                        </div>
+                        <div className="flex gap-2 shrink-0">
+                          <button onClick={() => handleRestore(b.id!, 'bill')} className="p-1.5 bg-emerald-500/10 text-emerald-600 rounded-lg hover:bg-emerald-500/20"><RefreshCcw size={14}/></button>
+                          <button onClick={() => handlePermanentDelete(b.id!, 'bill')} className="p-1.5 bg-rose-500/10 text-rose-600 rounded-lg hover:bg-rose-500/20"><Trash2 size={14}/></button>
                         </div>
                       </div>
                     ))}
@@ -367,7 +497,10 @@ export const SettingsManager: React.FC<SettingsManagerProps> = ({ onClose }) => 
                   <button onClick={handleBackup} className="flex items-center justify-center gap-2 py-3 bg-accent/10 text-accent hover:bg-accent/20 transition-colors rounded-xl font-bold text-sm">
                     <Download size={18} /> تصدير نسخة (JSON)
                   </button>
-                  <button onClick={() => fileInputRef.current?.click()} className="flex items-center justify-center gap-2 py-3 bg-muted text-foreground hover:bg-border transition-colors rounded-xl font-bold text-sm">
+                  <button onClick={handleExportCSV} className="flex items-center justify-center gap-2 py-3 bg-accent/10 text-accent hover:bg-accent/20 transition-colors rounded-xl font-bold text-sm">
+                    <Download size={18} /> تصدير (CSV)
+                  </button>
+                  <button onClick={() => fileInputRef.current?.click()} className="col-span-2 flex items-center justify-center gap-2 py-3 bg-muted text-foreground hover:bg-border transition-colors rounded-xl font-bold text-sm">
                     <Upload size={18} /> استيراد (JSON)
                   </button>
                   <input type="file" accept=".json" className="hidden" ref={fileInputRef} onChange={handleRestoreBackup} />
